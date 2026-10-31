@@ -7,6 +7,10 @@ interface MonochromeMapPickerProps {
   onSelectLocation: (lat: number, lon: number) => void;
 }
 
+const OSM_TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const OSM_ATTRIBUTION =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+
 export const MonochromeMapPicker: React.FC<MonochromeMapPickerProps> = ({
   latitude,
   longitude,
@@ -29,17 +33,27 @@ export const MonochromeMapPicker: React.FC<MonochromeMapPickerProps> = ({
     });
 
     const cartoKey = import.meta.env.VITE_CARTO_API_KEY?.trim();
-    const tileUrl = cartoKey
+    const initialUrl = cartoKey
       ? `https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(cartoKey)}`
-      : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-    const attribution = cartoKey
+      : OSM_TILE_URL;
+    const initialAttribution = cartoKey
       ? '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &amp; <a href="https://carto.com/attributions">CARTO</a>'
-      : '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+      : OSM_ATTRIBUTION;
 
-    L.tileLayer(tileUrl, {
-      attribution,
+    const tileLayer = L.tileLayer(initialUrl, {
+      attribution: initialAttribution,
       maxZoom: 18,
     }).addTo(map);
+
+    // If CARTO rejects the domain (e.g. localhost when restricted to github.io), fall back cleanly to OSM
+    if (cartoKey) {
+      let switchedToFallback = false;
+      tileLayer.on('tileerror', () => {
+        if (switchedToFallback) return;
+        switchedToFallback = true;
+        tileLayer.setUrl(OSM_TILE_URL);
+      });
+    }
 
     const marker = L.circleMarker([latitude, longitude], {
       radius: 7,

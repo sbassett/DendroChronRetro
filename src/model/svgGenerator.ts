@@ -252,16 +252,6 @@ export function generateCrossSectionSvgBundle(
       `<path id="inner-phloem" d="${phloemOuterD}" fill="#8f8f8a" stroke="#1e1e1e" stroke-width="${innerPeridermW.toFixed(2)}" stroke-linejoin="round"/>`
     );
 
-    // 1e. Dilated phloem parenchyma wedges beneath primary fissures
-    for (const wedge of sim.bark.phloemRayWedges) {
-      const wD = polarPointsPath(wedge.pointsPolar, true);
-      if (wD) {
-        elements.push(
-          `<path d="${wD}" fill="${grayHex(wedge.gray)}" fill-opacity="0.85"/>`
-        );
-      }
-    }
-
     // Thin vascular cambium boundary line
     elements.push(
       `<path d="${cambiumSmoothD}" fill="none" stroke="#3a3a38" stroke-width="${Math.max(0.14, maxSpan * 0.0008).toFixed(2)}"/>`

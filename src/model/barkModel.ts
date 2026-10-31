@@ -11,16 +11,9 @@ function wrapAngle(theta: number): number {
   return ((theta % twoPi) + twoPi) % twoPi;
 }
 
-function angularDiff(a: number, b: number): number {
-  let d = (a - b) % (2 * Math.PI);
-  if (d > Math.PI) d -= 2 * Math.PI;
-  if (d < -Math.PI) d += 2 * Math.PI;
-  return d;
-}
-
 /**
  * Biophysical transverse bark generator modeling living secondary phloem,
- * dilated phloem expansion rays, circumferential hoop-stress fracturing,
+ * circumferential hoop-stress fracturing,
  * and species-specific sequential periderm / rhytidome compartment anatomy.
  */
 export function buildAnatomicalBarkGeometry(
@@ -155,9 +148,6 @@ export function buildAnatomicalBarkGeometry(
     }
   }
 
-  // Primary fissure center angles (at unit boundaries) for phloem dilation wedges
-  const fissureAngles = unitStarts.map((a) => wrapAngle(a));
-
   const phloemNoise = new Noise2D(rngBark.fork('phloem-wave'));
   const surfaceNoise = new Noise2D(rngBark.fork('outer-crust'));
 
@@ -168,22 +158,9 @@ export function buildAnatomicalBarkGeometry(
     const theta = barkAnglesRad[i];
     const rCambium = sampleWoodRadius(theta);
 
-    // Living phloem thickens subtly beneath primary fissures (parenchyma dilation cushion)
-    let fissureProximity = 0;
-    for (const fAngle of fissureAngles) {
-      const d = Math.abs(angularDiff(theta, fAngle));
-      const sigma = 0.045;
-      if (d < sigma * 3) {
-        fissureProximity = Math.max(
-          fissureProximity,
-          Math.exp(-(d * d) / (2 * sigma * sigma))
-        );
-      }
-    }
-
     const localPhloem =
       basePhloemMm *
-      (1 + 0.22 * fissureProximity * hoopMaturity + 0.04 * phloemNoise.polarFbm(theta, 8, 1.1, 2));
+      (1 + 0.05 * phloemNoise.polarFbm(theta, 8, 1.1, 2));
     const rPhloem = rCambium + localPhloem;
     phloemOuterRadiusMm.push(rPhloem);
 
@@ -277,27 +254,6 @@ export function buildAnatomicalBarkGeometry(
 
     const localRhytidomeMm = Math.max(0.35, rhytidomeTargetMaxMm * heightFrac);
     outerBarkRadiusMm.push(rPhloem + localRhytidomeMm);
-  }
-
-  // Generate dilated phloem expansion wedges beneath primary fissures
-  const phloemRayWedges: BarkGeometry['phloemRayWedges'] = [];
-  if (hoopMaturity > 0.22) {
-    for (let u = 0; u < numUnits; u++) {
-      const fTheta = fissureAngles[u];
-      const rCam = sampleWoodRadius(fTheta);
-      const halfAngle = clamp(unitSpans[u] * 0.085, 0.008, 0.032);
-      const rOuterTip = rCam + basePhloemMm * (1 + 0.2 * hoopMaturity);
-      const rInnerRoot = rCam + basePhloemMm * 0.12;
-
-      phloemRayWedges.push({
-        pointsPolar: [
-          { theta: fTheta, r: rInnerRoot },
-          { theta: fTheta - halfAngle, r: rOuterTip },
-          { theta: fTheta + halfAngle, r: rOuterTip },
-        ],
-        gray: morphology === 'furrowed-corky' ? 122 : 134,
-      });
-    }
   }
 
   // Generate internal sequential periderm compartments (clipped to rhytidome in SVG!)
@@ -511,7 +467,6 @@ export function buildAnatomicalBarkGeometry(
     phloemOuterRadiusMm,
     outerBarkRadiusMm,
     barkAnglesRad,
-    phloemRayWedges,
     rhytidomeCells,
     peridermSeams,
   };

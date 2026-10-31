@@ -88,11 +88,6 @@ export interface BarkGeometry {
   outerBarkRadiusMm: number[];
   /** High-resolution angular grid (e.g. 1080 steps) used for bark & phloem contours */
   barkAnglesRad: number[];
-  /** Dilated phloem expansion wedges beneath primary fissures */
-  phloemRayWedges: Array<{
-    pointsPolar: PolarPoint[];
-    gray: number;
-  }>;
   /** Filled tangential cork wedges / lenticular scales clipped to the rhytidome */
   rhytidomeCells: Array<{
     pointsPolar: PolarPoint[];

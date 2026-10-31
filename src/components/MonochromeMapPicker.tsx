@@ -28,15 +28,18 @@ export const MonochromeMapPicker: React.FC<MonochromeMapPickerProps> = ({
       attributionControl: true,
     });
 
-    // CartoDB Positron clean light grayscale basemap
-    L.tileLayer(
-      'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-      {
-        attribution: '&copy; OSM &amp; CARTO',
-        subdomains: 'abcd',
-        maxZoom: 18,
-      }
-    ).addTo(map);
+    const cartoKey = import.meta.env.VITE_CARTO_API_KEY?.trim();
+    const tileUrl = cartoKey
+      ? `https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(cartoKey)}`
+      : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+    const attribution = cartoKey
+      ? '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &amp; <a href="https://carto.com/attributions">CARTO</a>'
+      : '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+
+    L.tileLayer(tileUrl, {
+      attribution,
+      maxZoom: 18,
+    }).addTo(map);
 
     const marker = L.circleMarker([latitude, longitude], {
       radius: 7,

@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { simulateTreeCrossSection } from './growthEngine';
 import { generateCrossSectionSvg } from './svgGenerator';
 import { EnvironmentDataset, MonthlyClimateYear } from './types';
+import {
+  chooseScaleBar,
+  formatAnnualPrecip,
+  formatDiameter,
+  formatElevation,
+  formatTemperature,
+  parseCoordinateInput,
+} from './units';
 
 function makeMockEnvironment(
   baseTempC = 10.5,
@@ -178,5 +186,23 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
     expect(pp.bark.morphology).toBe('plated-scaly');
     expect(df.bark.rhytidomeCells.length).toBeGreaterThan(10);
     expect(pp.bark.rhytidomeCells.length).toBeGreaterThan(30);
+    // Default SVG export uses US Customary scale & stump height
+    expect(svg).toContain('h=1.0 ft');
+  });
+
+  it('formats US Customary and Metric units and parses compass coordinates', () => {
+    expect(formatDiameter(508, 'us')).toBe('20.0 in');
+    expect(formatDiameter(508, 'metric')).toBe('50.8 cm');
+    expect(formatElevation(2245, 'us')).toBe('7,365 ft');
+    expect(formatTemperature(10, 'us')).toBe('50.0 °F');
+    expect(formatAnnualPrecip(635, 'us')).toBe('25.0 in/yr');
+
+    const usScale = chooseScaleBar(450, 'us');
+    expect(usScale.label).toBe('4 in');
+    expect(usScale.lengthMm).toBeCloseTo(101.6, 4);
+
+    expect(parseCoordinateInput('111.7442 W', 'lon')).toBeCloseTo(-111.7442, 5);
+    expect(parseCoordinateInput('-122.2557', 'lon')).toBeCloseTo(-122.2557, 5);
+    expect(parseCoordinateInput('44.2124 N', 'lat')).toBeCloseTo(44.2124, 5);
   });
 });

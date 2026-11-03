@@ -1,15 +1,18 @@
 import React from 'react';
 import { AnnualRingRecord } from '../model/types';
+import { formatRingWidth, UnitSystem } from '../model/units';
 
 interface RingChronologyChartProps {
   records: AnnualRingRecord[];
   hoveredRing: number | null;
+  unitSystem: UnitSystem;
   onHoverRing: (ringIndex: number | null) => void;
 }
 
 export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
   records,
   hoveredRing,
+  unitSystem,
   onHoverRing,
 }) => {
   if (records.length === 0) return null;
@@ -25,7 +28,7 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
           Ring-Width Chronology ({firstYear}–{lastYear})
         </span>
         <span className="chronology-legend">
-          Peak: {maxWidth.toFixed(2)} mm · Hover bars or cross-section to cross-date
+          Peak: {formatRingWidth(maxWidth, unitSystem)} · Hover bars or cross-section to cross-date
         </span>
       </div>
       <div
@@ -41,7 +44,7 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
               key={rec.ringIndex}
               className={`chrono-bar-col ${isHovered ? 'active' : ''}`}
               onMouseEnter={() => onHoverRing(rec.ringIndex)}
-              title={`${rec.calendarYear} (Ring #${rec.ringIndex}): ${rec.meanWidthMm.toFixed(2)} mm`}
+              title={`${rec.calendarYear} (Ring #${rec.ringIndex}): ${formatRingWidth(rec.meanWidthMm, unitSystem)}`}
             >
               <div
                 className={`chrono-bar ${isMarkerDrought ? 'drought' : ''} ${rec.isSyntheticClimate ? 'synthetic' : ''}`}
@@ -54,7 +57,7 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
       <div className="chronology-axis">
         <span>{firstYear} (Pith +1)</span>
         {records.some((r) => r.calendarYear === 1940) && (
-          <span>1940 (ERA5 Instrumental Start)</span>
+          <span>1940 (Instrumental Weather Start)</span>
         )}
         <span>{lastYear} (Cambium)</span>
       </div>

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { SvgViewBox } from '../model/svgGenerator';
 import { AnnualRingRecord } from '../model/types';
+import { formatRingWidth, UnitSystem } from '../model/units';
 
 interface SvgViewportProps {
   innerMarkup: string;
@@ -9,6 +10,7 @@ interface SvgViewportProps {
   specimenResetKey: string;
   ringsByIndex: Map<number, AnnualRingRecord>;
   hoveredRing: number | null;
+  unitSystem: UnitSystem;
   onHoverRing: (ringIndex: number | null) => void;
 }
 
@@ -18,6 +20,7 @@ export const SvgViewport: React.FC<SvgViewportProps> = ({
   specimenResetKey,
   ringsByIndex,
   hoveredRing,
+  unitSystem,
   onHoverRing,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -214,7 +217,9 @@ export const SvgViewport: React.FC<SvgViewportProps> = ({
             </span>
           </div>
           <div className="ring-badge-metrics">
-            <span>Width: {activeRec.meanWidthMm.toFixed(2)} mm</span>
+            <span>
+              Width: {formatRingWidth(activeRec.meanWidthMm, unitSystem)}
+            </span>
             <span>Latewood: {Math.round(activeRec.latewoodFraction * 100)}%</span>
             <span>{activeRec.isHeartwood ? 'Heartwood' : 'Sapwood'}</span>
             <span>

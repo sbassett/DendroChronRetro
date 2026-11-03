@@ -25,6 +25,19 @@ import {
   SpeciesId,
   TreeSimulationResult,
 } from './model/types';
+import {
+  formatAnnualPrecip,
+  formatBarkThickness,
+  formatDiameter,
+  formatElevation,
+  formatSlope,
+  formatStumpHeightLong,
+  formatStumpHeightShort,
+  formatTemperature,
+  formatViabilityReason,
+  parseCoordinateInput,
+  UnitSystem,
+} from './model/units';
 import { loadEnvironmentDataset } from './services/environmentApi';
 import './App.css';
 
@@ -37,6 +50,7 @@ function compassLabel(deg: number): string {
 export const App: React.FC = () => {
   const currentCalendarYear = useMemo(() => new Date().getFullYear(), []);
 
+  const [unitSystem, setUnitSystem] = useState<UnitSystem>('us');
   const [species, setSpecies] = useState<SpeciesId>('douglas-fir');
   const [latitude, setLatitude] = useState<number>(44.2124);
   const [longitude, setLongitude] = useState<number>(-122.2557);
@@ -51,7 +65,9 @@ export const App: React.FC = () => {
     ? customDeathYear
     : currentCalendarYear;
 
-  const [renderOptions, setRenderOptions] = useState<SvgRenderOptions>({
+  const [renderOptions, setRenderOptions] = useState<
+    Omit<SvgRenderOptions, 'unitSystem'>
+  >({
     showBark: true,
     showMedullaryRays: true,
     showAnnotations: true,
@@ -72,15 +88,15 @@ export const App: React.FC = () => {
   }, []);
 
   const commitCoordInputs = useCallback(() => {
-    const parsedLat = Number(latInput);
-    const parsedLon = Number(lonInput);
-    if (!Number.isNaN(parsedLat) && parsedLat >= -85 && parsedLat <= 85) {
+    const parsedLat = parseCoordinateInput(latInput, 'lat');
+    const parsedLon = parseCoordinateInput(lonInput, 'lon');
+    if (parsedLat !== null) {
       setLatitude(Number(parsedLat.toFixed(5)));
       setLatInput(parsedLat.toFixed(5));
     } else {
       setLatInput(latitude.toFixed(5));
     }
-    if (!Number.isNaN(parsedLon) && parsedLon >= -180 && parsedLon <= 180) {
+    if (parsedLon !== null) {
       setLongitude(Number(parsedLon.toFixed(5)));
       setLonInput(parsedLon.toFixed(5));
     } else {
@@ -128,8 +144,11 @@ export const App: React.FC = () => {
 
   const svgBundle = useMemo(() => {
     if (!simulation) return null;
-    return generateCrossSectionSvgBundle(simulation, renderOptions);
-  }, [simulation, renderOptions]);
+    return generateCrossSectionSvgBundle(simulation, {
+      ...renderOptions,
+      unitSystem,
+    });
+  }, [simulation, renderOptions, unitSystem]);
 
   const svgMarkup = svgBundle?.svgMarkup ?? '';
 
@@ -172,6 +191,13 @@ export const App: React.FC = () => {
   }, [svgMarkup]);
 
   const activeProfile = SPECIES_PROFILES[species];
+  const viabilityDetail = useMemo(
+    () =>
+      simulation
+        ? formatViabilityReason(activeProfile, simulation.environment, unitSystem)
+        : null,
+    [simulation, activeProfile, unitSystem]
+  );
 
   return (
     <div className="app-shell">
@@ -188,9 +214,33 @@ export const App: React.FC = () => {
       {/* Left Control Sidebar */}
       <aside className="sidebar">
         <header className="brand-header">
-          <div className="brand-title">
-            <TreePine size={20} strokeWidth={2.2} />
-            <h1>DendroSim</h1>
+          <div className="brand-top-row">
+            <div className="brand-title">
+              <TreePine size={20} strokeWidth={2.2} />
+              <h1>DendroSim</h1>
+            </div>
+            <div
+              className="unit-segmented"
+              role="group"
+              aria-label="Units of measure"
+            >
+              <button
+                type="button"
+                className={unitSystem === 'us' ? 'active' : ''}
+                title="US Customary units (in, ft, °F)"
+                onClick={() => setUnitSystem('us')}
+              >
+                US
+              </button>
+              <button
+                type="button"
+                className={unitSystem === 'metric' ? 'active' : ''}
+                title="Metric units (mm, cm, m, °C)"
+                onClick={() => setUnitSystem('metric')}
+              >
+                Metric
+              </button>
+            </div>
           </div>
           <p className="brand-subtitle">
             Deterministic Grayscale Stump Cross-Section &amp; Ring Simulator
@@ -231,15 +281,17 @@ export const App: React.FC = () => {
           <MonochromeMapPicker
             latitude={latitude}
             longitude={longitude}
+            unitSystem={unitSystem}
             onSelectLocation={handleSelectLocation}
           />
 
           <div className="coord-inputs-grid">
             <div className="field-group">
-              <label htmlFor="lat-input">Latitude (°)</label>
+              <label htmlFor="lat-input">Latitude (°N)</label>
               <input
                 id="lat-input"
                 type="text"
+                placeholder="e.g. 44.2124"
                 value={latInput}
                 onChange={(e) => setLatInput(e.target.value)}
                 onBlur={commitCoordInputs}
@@ -247,10 +299,11 @@ export const App: React.FC = () => {
               />
             </div>
             <div className="field-group">
-              <label htmlFor="lon-input">Longitude (°)</label>
+              <label htmlFor="lon-input">Longitude (°W negative)</label>
               <input
                 id="lon-input"
                 type="text"
+                placeholder="e.g. -122.2557"
                 value={lonInput}
                 onChange={(e) => setLonInput(e.target.value)}
                 onBlur={commitCoordInputs}
@@ -260,7 +313,7 @@ export const App: React.FC = () => {
           </div>
 
           <div className="preset-block">
-            <span className="preset-heading">Reference Forest Sites:</span>
+            <span className="preset-heading">US Reference Forest Sites:</span>
             <div className="preset-chips">
               {LOCATION_PRESETS.map((preset) => {
                 const isMatch =
@@ -358,13 +411,15 @@ export const App: React.FC = () => {
               <div>
                 <strong>
                   {simulation.visibleRingCount} visible rings at{' '}
-                  {simulation.stumpHeightM.toFixed(2)} m stump height
+                  {formatStumpHeightShort(simulation.stumpHeightM, unitSystem)}{' '}
+                  stump height
                 </strong>
                 <p>
                   Germinated in <strong>{simulation.germinationYear}</strong>; took{' '}
                   <strong>{simulation.yearsToStumpHeight} yrs</strong> as a seedling
-                  to reach {simulation.stumpHeightM.toFixed(2)} m (1.0 ft) cut plane
-                  (first ring: {simulation.firstRingYear}, outer cambium:{' '}
+                  to reach the{' '}
+                  {formatStumpHeightLong(simulation.stumpHeightM, unitSystem)} cut
+                  plane (first ring: {simulation.firstRingYear}, outer cambium:{' '}
                   {effectiveDeathYear}).
                 </p>
               </div>
@@ -441,32 +496,46 @@ export const App: React.FC = () => {
                 <div className="metric-pill">
                   <span className="metric-label">Diameter (Outside Bark)</span>
                   <span className="metric-value">
-                    {(simulation.diameterOutsideBarkMm / 10).toFixed(1)} cm{' '}
-                    <small>
-                      ({(simulation.diameterOutsideBarkMm / 25.4).toFixed(1)} in)
-                    </small>
+                    {formatDiameter(simulation.diameterOutsideBarkMm, unitSystem)}
                   </span>
                 </div>
                 <div className="metric-pill">
                   <span className="metric-label">Wood DIB / Mean Bark</span>
                   <span className="metric-value">
-                    {(simulation.diameterInsideBarkMm / 10).toFixed(1)} cm /{' '}
-                    {simulation.bark.meanThicknessMm.toFixed(1)} mm
+                    {formatDiameter(simulation.diameterInsideBarkMm, unitSystem)} /{' '}
+                    {formatBarkThickness(
+                      simulation.bark.meanThicknessMm,
+                      unitSystem
+                    )}
                   </span>
                 </div>
                 <div className="metric-pill">
-                  <span className="metric-label">Terrain (90m DEM)</span>
+                  <span className="metric-label">Terrain (Elev · Slope)</span>
                   <span className="metric-value">
-                    {Math.round(simulation.environment.terrain.elevationM)} m ·{' '}
-                    {simulation.environment.terrain.slopeDeg.toFixed(1)}°{' '}
+                    {formatElevation(
+                      simulation.environment.terrain.elevationM,
+                      unitSystem
+                    )}{' '}
+                    ·{' '}
+                    {formatSlope(
+                      simulation.environment.terrain.slopeDeg,
+                      unitSystem
+                    )}{' '}
                     {compassLabel(simulation.environment.terrain.aspectDeg)}
                   </span>
                 </div>
                 <div className="metric-pill">
                   <span className="metric-label">Site Climate</span>
                   <span className="metric-value">
-                    {simulation.environment.meanAnnualTempC.toFixed(1)} °C ·{' '}
-                    {Math.round(simulation.environment.meanAnnualPrecipMm)} mm/yr
+                    {formatTemperature(
+                      simulation.environment.meanAnnualTempC,
+                      unitSystem
+                    )}{' '}
+                    ·{' '}
+                    {formatAnnualPrecip(
+                      simulation.environment.meanAnnualPrecipMm,
+                      unitSystem
+                    )}
                   </span>
                 </div>
                 <div
@@ -480,7 +549,9 @@ export const App: React.FC = () => {
                 </div>
               </>
             ) : (
-              <span className="loading-text">Loading site climate &amp; terrain...</span>
+              <span className="loading-text">
+                Loading historical weather &amp; terrain…
+              </span>
             )}
           </div>
 
@@ -516,9 +587,7 @@ export const App: React.FC = () => {
               <AlertTriangle size={16} />
               <div>
                 <strong>{simulation.viability.summary}</strong>
-                {simulation.viability.reasons.length > 0 && (
-                  <span> — {simulation.viability.reasons[0]}</span>
-                )}
+                {viabilityDetail && <span> — {viabilityDetail}</span>}
               </div>
             </div>
           )}
@@ -526,7 +595,9 @@ export const App: React.FC = () => {
         {/* Interactive SVG Canvas */}
         <div className="canvas-area">
           {loadingEnv && (
-            <div className="Updating-pill">Querying Open-Meteo ERA5 &amp; DEM…</div>
+            <div className="Updating-pill">
+              Loading historical weather &amp; terrain…
+            </div>
           )}
           {simulation && svgBundle && (
             <SvgViewport
@@ -535,6 +606,7 @@ export const App: React.FC = () => {
               specimenResetKey={`${simulation.seedKey}:${totalAge}:${effectiveDeathYear}`}
               ringsByIndex={ringsByIndex}
               hoveredRing={hoveredRing}
+              unitSystem={unitSystem}
               onHoverRing={setHoveredRing}
             />
           )}
@@ -545,6 +617,7 @@ export const App: React.FC = () => {
           <RingChronologyChart
             records={ringRecords}
             hoveredRing={hoveredRing}
+            unitSystem={unitSystem}
             onHoverRing={setHoveredRing}
           />
         )}

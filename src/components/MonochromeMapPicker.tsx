@@ -1,9 +1,11 @@
 import React, { useEffect, useRef } from 'react';
 import L from 'leaflet';
+import { UnitSystem } from '../model/units';
 
 interface MonochromeMapPickerProps {
   latitude: number;
   longitude: number;
+  unitSystem: UnitSystem;
   onSelectLocation: (lat: number, lon: number) => void;
 }
 
@@ -14,11 +16,13 @@ const OSM_ATTRIBUTION =
 export const MonochromeMapPicker: React.FC<MonochromeMapPickerProps> = ({
   latitude,
   longitude,
+  unitSystem,
   onSelectLocation,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markerRef = useRef<L.CircleMarker | null>(null);
+  const scaleControlRef = useRef<L.Control.Scale | null>(null);
   const callbackRef = useRef(onSelectLocation);
   callbackRef.current = onSelectLocation;
 
@@ -55,6 +59,15 @@ export const MonochromeMapPicker: React.FC<MonochromeMapPickerProps> = ({
       });
     }
 
+    const scaleCtrl = L.control
+      .scale({
+        imperial: unitSystem === 'us',
+        metric: unitSystem === 'metric',
+        maxWidth: 100,
+        position: 'bottomleft',
+      })
+      .addTo(map);
+
     const marker = L.circleMarker([latitude, longitude], {
       radius: 7,
       color: '#111111',
@@ -74,14 +87,33 @@ export const MonochromeMapPicker: React.FC<MonochromeMapPickerProps> = ({
 
     mapRef.current = map;
     markerRef.current = marker;
+    scaleControlRef.current = scaleCtrl;
 
     return () => {
       map.remove();
       mapRef.current = null;
       markerRef.current = null;
+      scaleControlRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Sync Leaflet scale bar with US / Metric switch
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (scaleControlRef.current) {
+      scaleControlRef.current.remove();
+    }
+    scaleControlRef.current = L.control
+      .scale({
+        imperial: unitSystem === 'us',
+        metric: unitSystem === 'metric',
+        maxWidth: 100,
+        position: 'bottomleft',
+      })
+      .addTo(map);
+  }, [unitSystem]);
 
   useEffect(() => {
     const map = mapRef.current;

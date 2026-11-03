@@ -1,12 +1,18 @@
 import { SeededRNG } from './prng';
 import { SPECIES_PROFILES } from './species';
 import { PolarPoint, TreeSimulationResult } from './types';
+import {
+  chooseScaleBar,
+  formatStumpHeightShort,
+  UnitSystem,
+} from './units';
 
 export interface SvgRenderOptions {
   showBark: boolean;
   showMedullaryRays: boolean;
   showAnnotations: boolean;
   transparentBackground: boolean;
+  unitSystem?: UnitSystem;
   highlightedRingIndex?: number | null;
 }
 
@@ -113,18 +119,6 @@ function polarPointsPath(points: PolarPoint[], closed: boolean): string {
   }
   if (closed) parts.push('Z');
   return parts.join('');
-}
-
-function chooseNiceScaleBarMm(diameterMm: number): number {
-  const target = diameterMm * 0.24;
-  const candidates = [5, 10, 20, 25, 50, 100, 200, 250, 500];
-  let best = candidates[0];
-  for (const c of candidates) {
-    if (Math.abs(c - target) < Math.abs(best - target)) {
-      best = c;
-    }
-  }
-  return best;
 }
 
 /**
@@ -381,15 +375,16 @@ export function generateCrossSectionSvgBundle(
 
   // Layer 4: Scientific Scale Bar, Orientation Compass, & Specimen Metadata
   if (options.showAnnotations) {
+    const units: UnitSystem = options.unitSystem ?? 'us';
     const fontSize = Math.max(2.4, maxSpan * 0.024);
     const smallFont = fontSize * 0.78;
     const strokeW = Math.max(0.25, maxSpan * 0.0024);
 
-    const scaleMm = chooseNiceScaleBarMm(maxSpan);
+    const scaleSpec = chooseScaleBar(maxSpan, units);
+    const scaleMm = scaleSpec.lengthMm;
     const barX = vbX + pad * 0.55;
     const barY = vbY + vbH - pad * 0.62;
-    const scaleLabel =
-      scaleMm >= 10 ? `${scaleMm / 10} cm (${scaleMm} mm)` : `${scaleMm} mm`;
+    const scaleLabel = scaleSpec.label;
 
     elements.push(
       `<g id="annotations" pointer-events="none" fill="#1c1c1c" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">`
@@ -403,10 +398,11 @@ export function generateCrossSectionSvgBundle(
 
     const latLabel = `${Math.abs(sim.params.latitude).toFixed(4)}°${sim.params.latitude >= 0 ? 'N' : 'S'}`;
     const lonLabel = `${Math.abs(sim.params.longitude).toFixed(4)}°${sim.params.longitude >= 0 ? 'E' : 'W'}`;
+    const stumpLabel = formatStumpHeightShort(sim.stumpHeightM, units);
     const rightX = vbX + vbW - pad * 0.55;
     elements.push(
       `<text x="${rightX.toFixed(2)}" y="${(barY - smallFont * 0.95).toFixed(2)}" text-anchor="end" font-size="${smallFont.toFixed(2)}" font-style="italic">${profile.scientificName} (${profile.commonName})</text>` +
-        `<text x="${rightX.toFixed(2)}" y="${(barY + smallFont * 0.35).toFixed(2)}" text-anchor="end" font-size="${(smallFont * 0.88).toFixed(2)}" fill="#444444">${latLabel}, ${lonLabel} · h=${sim.stumpHeightM.toFixed(2)}m · Age ${sim.params.totalAge}y (${sim.visibleRingCount} rings, ${sim.firstRingYear}–${sim.params.deathYear})</text>`
+        `<text x="${rightX.toFixed(2)}" y="${(barY + smallFont * 0.35).toFixed(2)}" text-anchor="end" font-size="${(smallFont * 0.88).toFixed(2)}" fill="#444444">${latLabel}, ${lonLabel} · h=${stumpLabel} · Age ${sim.params.totalAge}y (${sim.visibleRingCount} rings, ${sim.firstRingYear}–${sim.params.deathYear})</text>`
     );
 
     const compR = fontSize * 1.45;

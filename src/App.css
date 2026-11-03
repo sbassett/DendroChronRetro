@@ -52,10 +52,45 @@ body,
   padding-bottom: 12px;
 }
 
+.brand-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .brand-title {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.unit-segmented {
+  display: inline-flex;
+  border: 1px solid var(--border-light);
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--bg-subtle);
+}
+
+.unit-segmented button {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.unit-segmented button:hover {
+  color: var(--text-primary);
+}
+
+.unit-segmented button.active {
+  background: var(--accent-dark);
+  color: #ffffff;
 }
 
 .brand-title h1 {

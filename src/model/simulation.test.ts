@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  getCachedEnvironmentDataset,
+  loadEnvironmentDataset,
+} from '../services/environmentApi';
 import { simulateTreeCrossSection } from './growthEngine';
 import { generateCrossSectionSvg } from './svgGenerator';
 import { EnvironmentDataset, MonthlyClimateYear } from './types';
@@ -204,5 +208,86 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
     expect(parseCoordinateInput('111.7442 W', 'lon')).toBeCloseTo(-111.7442, 5);
     expect(parseCoordinateInput('-122.2557', 'lon')).toBeCloseTo(-122.2557, 5);
     expect(parseCoordinateInput('44.2124 N', 'lat')).toBeCloseTo(44.2124, 5);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('parses NASA POWER monthly records and serves subsequent age changes synchronously from cache', async () => {
+    const t2m: Record<string, number> = {};
+    const prec: Record<string, number> = {};
+    for (let y = 2018; y <= 2025; y++) {
+      for (let m = 1; m <= 12; m++) {
+        const key = `${y}${String(m).padStart(2, '0')}`;
+        t2m[key] = 10 + (m === 7 ? 8 : 0);
+        prec[key] = 2.0; // 2 mm/day
+      }
+      t2m[`${y}13`] = 10.6; // annual summary key to ignore
+      prec[`${y}13`] = 2.0;
+    }
+    t2m['202601'] = 4.0;
+    prec['202601'] = 3.0;
+    t2m['202602'] = -999; // missing future month sentinel
+    prec['202602'] = -999;
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('open-meteo.com/v1/elevation')) {
+        return new Response(
+          JSON.stringify({ elevation: [800, 810, 790, 805, 795] }),
+          { status: 200 }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          geometry: { coordinates: [-120.55, 43.55, 800] },
+          properties: { parameter: { T2M: t2m, PRECTOTCORR: prec } },
+        }),
+        { status: 200 }
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ds = await loadEnvironmentDataset(43.5512, -120.5512, 2019, 2026);
+    expect(ds.source).toBe('nasa-power-merra2');
+    // 2.0 mm/day * 365.25 days + 1/9th of Jan 2026 (3.0 mm/day) = ~733.94 mm/yr
+    expect(ds.meanAnnualPrecipMm).toBeGreaterThan(730);
+    expect(ds.meanAnnualPrecipMm).toBeLessThan(735);
+
+    // Partial year 2026 splices Jan observed + Feb..Dec synthesized without failing
+    const y2026 = ds.years.find((yr) => yr.year === 2026);
+    expect(y2026).toBeDefined();
+    expect(y2026!.tempC[0]).toBeCloseTo(4.0, 3);
+    expect(y2026!.precipMm[0]).toBeCloseTo(93.0, 3); // 3 mm/day * 31 Jan days
+
+    // Synchronous cache hit for a wider age span at the same coordinates
+    const syncDs = getCachedEnvironmentDataset(43.5512, -120.5512, 1950, 2026);
+    expect(syncDs).not.toBeNull();
+    expect(syncDs!.years[0].year).toBe(1949);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('aborts hung sockets via AbortController timeout and falls back cleanly without hanging', async () => {
+    vi.useFakeTimers();
+
+    const stalledFetch = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'));
+          });
+        })
+    );
+    vi.stubGlobal('fetch', stalledFetch);
+
+    const pending = loadEnvironmentDataset(38.9123, -106.4123, 1980, 2026);
+    await vi.advanceTimersByTimeAsync(5000);
+    const fallbackDs = await pending;
+
+    expect(fallbackDs.source).toBe('offline-climatology');
+    expect(fallbackDs.years.length).toBe(2026 - 1979 + 1);
+    expect(fallbackDs.terrain.elevationM).toBeGreaterThan(50);
   });
 });

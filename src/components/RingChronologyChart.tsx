@@ -20,6 +20,9 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
   const maxWidth = Math.max(...records.map((r) => r.meanWidthMm), 1.0);
   const firstYear = records[0].calendarYear;
   const lastYear = records[records.length - 1].calendarYear;
+  const firstObservedTransitionYear = records[0].isSyntheticClimate
+    ? (records.find((r) => !r.isSyntheticClimate)?.calendarYear ?? null)
+    : null;
 
   return (
     <div className="chronology-panel">
@@ -56,8 +59,8 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
       </div>
       <div className="chronology-axis">
         <span>{firstYear} (Pith +1)</span>
-        {records.some((r) => r.calendarYear === 1940) && (
-          <span>1940 (Instrumental Weather Start)</span>
+        {firstObservedTransitionYear !== null && (
+          <span>{firstObservedTransitionYear} (Observed Weather Start)</span>
         )}
         <span>{lastYear} (Cambium)</span>
       </div>

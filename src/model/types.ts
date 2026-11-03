@@ -29,7 +29,7 @@ export interface MonthlyClimateYear {
 export interface EnvironmentDataset {
   terrain: TerrainInfo;
   years: MonthlyClimateYear[];
-  source: 'open-meteo-era5' | 'offline-climatology';
+  source: 'nasa-power-merra2' | 'open-meteo-era5' | 'offline-climatology';
   meanAnnualTempC: number;
   meanAnnualPrecipMm: number;
   summerPrecipShare: number;

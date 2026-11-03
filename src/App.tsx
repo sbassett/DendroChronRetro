@@ -38,7 +38,10 @@ import {
   parseCoordinateInput,
   UnitSystem,
 } from './model/units';
-import { loadEnvironmentDataset } from './services/environmentApi';
+import {
+  getCachedEnvironmentDataset,
+  loadEnvironmentDataset,
+} from './services/environmentApi';
 import './App.css';
 
 function compassLabel(deg: number): string {
@@ -106,8 +109,20 @@ export const App: React.FC = () => {
 
   // Fetch environmental & historical climate data when location or year span changes
   useEffect(() => {
-    let cancelled = false;
     const startYear = effectiveDeathYear - Math.max(4, totalAge);
+    const cachedSync = getCachedEnvironmentDataset(
+      latitude,
+      longitude,
+      startYear,
+      effectiveDeathYear
+    );
+    if (cachedSync) {
+      setEnvDataset(cachedSync);
+      setLoadingEnv(false);
+      return;
+    }
+
+    let cancelled = false;
     setLoadingEnv(true);
 
     loadEnvironmentDataset(latitude, longitude, startYear, effectiveDeathYear)

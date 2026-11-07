@@ -505,16 +505,17 @@ export function buildAnatomicalBarkGeometry(
   const edgeGapL = new Float64Array(8);
   const edgePosR = new Float64Array(8);
   const edgeGapR = new Float64Array(8);
-  const pullScale = morphology === 'plated-scaly' ? 0.5 : 1.14;
+  const pullScale = morphology === 'plated-scaly' ? 0.5 : 0.62;
   // Resinous dark wound-periderm apex half-width at established fissures (0 mm at initiation -> C0 exact!)
   const woundApexHalfWidthMm =
     morphology === 'plated-scaly'
       ? clamp(0.95 + meanWoodRadiusMm * 0.0065, 0.95, 2.8)
       : 0.95;
-  // Shear-lag canyon rim saturation for tabular plate-tectonic Ponderosa armor:
+  // Shear-lag canyon/furrow rim saturation:
+  // Tabular plate-tectonic Ponderosa armor (4.6 mm) vs Douglas-fir deep furrow clefts (8.2 mm).
   // Measured relative to cohort anchor radius r0 so angular setback is strictly monotonic (d(alpha)/dt >= 0,
-  // zero backward cliff drift!) while canyon openings widen naturally as plates drift apart radially.
-  const canyonShearLagMm = 4.6;
+  // zero backward cliff drift!) while canyon/furrow openings widen naturally as plates drift apart radially.
+  const shearLagMm = morphology === 'plated-scaly' ? 4.6 : 9.0;
 
   // Exact C0-continuous kinematic evolution of a cohort's lateral presence on a plate:
   // Every cohort splits directly at active fissure roots (zero conveyor-belt floor in grooves!)
@@ -631,54 +632,38 @@ export function buildAnatomicalBarkGeometry(
         const dLeanL = (st.leanSlopeL * dR) / stEndR;
         const dLeanR = (st.leanSlopeR * dR) / stEndR;
 
-        if (morphology === 'plated-scaly') {
-          const rawStretch = 1 - rawRatio;
-          const rAnchor = Math.max(30.0, r0);
-          const maxWallRad = canyonShearLagMm / rAnchor;
-          for (let e = 0; e < nEdgesL; e++) {
-            const prev = edgePosL[e];
-            const halfSpanRad = Math.max(0, mid - prev);
-            const rawDeltaRad = halfSpanRad * rawStretch * pullScale;
-            const remWallRad = Math.max(0.003, maxWallRad - edgeGapL[e]);
-            const setbackRad =
-              remWallRad * (1 - Math.exp(-rawDeltaRad / remWallRad));
-            const next = clamp(
-              prev + setbackRad + dLeanL,
-              prev,
-              Math.max(mid, prev)
-            );
-            edgePosL[e] = next;
-            edgeGapL[e] += Math.max(0, next - prev);
-          }
-          for (let e = 0; e < nEdgesR; e++) {
-            const prev = edgePosR[e];
-            const halfSpanRad = Math.max(0, prev - mid);
-            const rawDeltaRad = halfSpanRad * rawStretch * pullScale;
-            const remWallRad = Math.max(0.003, maxWallRad - edgeGapR[e]);
-            const setbackRad =
-              remWallRad * (1 - Math.exp(-rawDeltaRad / remWallRad));
-            const next = clamp(
-              prev - setbackRad + dLeanR,
-              Math.min(mid, prev),
-              prev
-            );
-            edgePosR[e] = next;
-            edgeGapR[e] += Math.max(0, prev - next);
-          }
-        } else {
-          const lambda = clamp(1 - pullScale * (1 - rawRatio), 0.14, 1.0);
-          for (let e = 0; e < nEdgesL; e++) {
-            const prev = edgePosL[e];
-            const next = mid + (prev - mid) * lambda + dLeanL;
-            edgePosL[e] = next;
-            edgeGapL[e] += Math.max(0, next - prev);
-          }
-          for (let e = 0; e < nEdgesR; e++) {
-            const prev = edgePosR[e];
-            const next = mid + (prev - mid) * lambda + dLeanR;
-            edgePosR[e] = next;
-            edgeGapR[e] += Math.max(0, prev - next);
-          }
+        const rawStretch = 1 - rawRatio;
+        const rAnchor = Math.max(30.0, r0);
+        const maxWallRad = shearLagMm / rAnchor;
+        for (let e = 0; e < nEdgesL; e++) {
+          const prev = edgePosL[e];
+          const halfSpanRad = Math.max(0, mid - prev);
+          const rawDeltaRad = halfSpanRad * rawStretch * pullScale;
+          const remWallRad = Math.max(0.003, maxWallRad - edgeGapL[e]);
+          const setbackRad =
+            remWallRad * (1 - Math.exp(-rawDeltaRad / remWallRad));
+          const next = clamp(
+            prev + setbackRad + dLeanL,
+            prev,
+            Math.max(mid, prev)
+          );
+          edgePosL[e] = next;
+          edgeGapL[e] += Math.max(0, next - prev);
+        }
+        for (let e = 0; e < nEdgesR; e++) {
+          const prev = edgePosR[e];
+          const halfSpanRad = Math.max(0, prev - mid);
+          const rawDeltaRad = halfSpanRad * rawStretch * pullScale;
+          const remWallRad = Math.max(0.003, maxWallRad - edgeGapR[e]);
+          const setbackRad =
+            remWallRad * (1 - Math.exp(-rawDeltaRad / remWallRad));
+          const next = clamp(
+            prev - setbackRad + dLeanR,
+            Math.min(mid, prev),
+            prev
+          );
+          edgePosR[e] = next;
+          edgeGapR[e] += Math.max(0, prev - next);
         }
       }
     }
@@ -686,13 +671,14 @@ export function buildAnatomicalBarkGeometry(
     const targetBevelMm =
       morphology === 'plated-scaly'
         ? 0.65 + 0.018 * zMid
-        : 2.1 + 0.2 * zMid;
+        : 16.5 + 0.08 * zMid;
     const maxBevelRad = targetBevelMm / rSafe;
+    const bevelMult = morphology === 'plated-scaly' ? 1.35 : 2.1;
 
     let presence = 1.0;
     for (let e = 0; e < nEdgesL; e++) {
       const alpha = edgePosL[e];
-      const bevel = Math.min(maxBevelRad, edgeGapL[e] * 1.35);
+      const bevel = Math.min(maxBevelRad, edgeGapL[e] * bevelMult);
       const fL =
         bevel <= 1e-7
           ? unwrapped >= alpha
@@ -703,7 +689,7 @@ export function buildAnatomicalBarkGeometry(
     }
     for (let e = 0; e < nEdgesR; e++) {
       const beta = edgePosR[e];
-      const bevel = Math.min(maxBevelRad, edgeGapR[e] * 1.35);
+      const bevel = Math.min(maxBevelRad, edgeGapR[e] * bevelMult);
       const fR =
         bevel <= 1e-7
           ? unwrapped <= beta
@@ -807,7 +793,7 @@ export function buildAnatomicalBarkGeometry(
     const rootDip =
       morphology === 'plated-scaly'
         ? 1 - 0.032 * Math.min(1.2, dipSum)
-        : 1 - 0.12 * Math.min(1.25, dipSum);
+        : 1 - 0.11 * Math.min(1.25, dipSum);
     const crustMute = 1 - 0.85 * nearActiveGroove;
     const archAmp = morphology === 'plated-scaly' ? 0.011 : 0.025;
     const archMod =

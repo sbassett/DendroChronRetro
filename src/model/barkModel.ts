@@ -482,6 +482,9 @@ export function buildAnatomicalBarkGeometry(
   const activeCohorts = cohorts
     .filter((coh) => totalProducedRhytidomeMm - coh.bStartMm > 0.02)
     .sort((a, b) => b.cohortIdx - a.cohortIdx);
+  if (activeCohorts.length === 0 && cohorts.length > 0) {
+    activeCohorts.push(cohorts[0]);
+  }
   const numActive = activeCohorts.length;
 
   const barkSteps = 1080;
@@ -819,15 +822,15 @@ export function buildAnatomicalBarkGeometry(
 
     const profileScale = rootDip * archMod * surfNoiseFactor;
 
-    let cumZ = 0;
-    cohortZ[0][i] = 0;
+    const layerThick = new Float64Array(numActive);
+    let olderThick = 0;
 
     for (let s = 0; s < numActive; s++) {
       const coh = activeCohorts[s];
       const zInUnclipped = Math.max(0, totalProducedRhytidomeMm - coh.bEndMm);
       const rawZOut = totalProducedRhytidomeMm - coh.bStartMm;
 
-      let localLayerThick = 0;
+      let lt = 0;
       if (rawZOut > 0 && zInUnclipped < plateMaxRhytMm) {
         const zOut = Math.min(rawZOut, plateMaxRhytMm);
         const dH = Math.max(0, zOut - zInUnclipped);
@@ -848,15 +851,30 @@ export function buildAnatomicalBarkGeometry(
             unwrapped
           );
 
-          localLayerThick = dH * profileScale * presence;
+          lt = dH * profileScale * presence;
         }
       }
+      layerThick[s] = lt;
+      if (s > 0) olderThick += lt;
+    }
 
-      cumZ += localLayerThick;
+    // Active nascent innermost periderm (s = 0):
+    // Across tabular plates, it maintains its continuous accretion base.
+    // In fissure grooves / clefts where older cohorts have cleaved open (olderThick -> 0),
+    // it smoothly provides the protective necrophylactic floor seal (localSealMm) with zero voids.
+    layerThick[0] = Math.max(
+      layerThick[0],
+      Math.max(0, localSealMm - olderThick)
+    );
+
+    let cumZ = 0;
+    cohortZ[0][i] = 0;
+    for (let s = 0; s < numActive; s++) {
+      cumZ += layerThick[s];
       cohortZ[s + 1][i] = cumZ;
     }
 
-    outerBarkRadiusMm.push(rPhloem + Math.max(localSealMm, cumZ));
+    outerBarkRadiusMm.push(rPhloem + cumZ);
   }
 
   const sampleBarkGrid = (
@@ -876,8 +894,92 @@ export function buildAnatomicalBarkGeometry(
   const rhytidomeCells: BarkGeometry['rhytidomeCells'] = [];
   const peridermSeams: BarkGeometry['peridermSeams'] = [];
 
+  // 4a. Active Nascent Innermost Periderm (s = 0)
+  // Continuous 360-degree circumferential jacket directly enclosing living secondary phloem.
+  // Seamlessly bridges tabular plate bases and fissure trough floors with zero radial cracks.
+  if (numActive > 0) {
+    const coh0 = activeCohorts[0];
+    const zInArr0 = cohortZ[0];
+    const zOutArr0 = cohortZ[1];
+    const zSurfArr = cohortZ[numActive];
+    const nominalThick0 = Math.max(0.4, coh0.bEndMm - coh0.bStartMm);
+    const outSeed0 = coh0.cohortIdx * 1.73;
+
+    const nascentSectors = clamp(
+      Math.round((twoPi * Math.max(25, meanWoodRadiusMm)) / 22),
+      24,
+      64
+    );
+
+    for (let sec = 0; sec < nascentSectors; sec++) {
+      const secStart = startOffset + (sec / nascentSectors) * twoPi;
+      const secEnd = startOffset + ((sec + 1) / nascentSectors) * twoPi;
+      const secSpan = secEnd - secStart;
+      const steps = Math.max(16, Math.ceil((secSpan / twoPi) * 900));
+
+      const midTheta = secStart + 0.5 * secSpan;
+      const z1Mid = sampleBarkGrid(zOutArr0, midTheta);
+      const zSurfMid = sampleBarkGrid(zSurfArr, midTheta);
+      const isGrooveFloor = z1Mid >= zSurfMid - 0.12;
+
+      // In fissure groove floors, dark suberized resinous wound-periderm seal;
+      // on plate bases, pale periderm cork.
+      const sectorGray = isGrooveFloor
+        ? Math.round(
+            clamp(
+              (morphology === 'furrowed-corky' ? 70 : 78) +
+                floorNoise.polarFbm(midTheta, 8.0, 1.4, 2) * 8,
+              64,
+              88
+            )
+          )
+        : Math.round(
+            clamp(
+              (morphology === 'furrowed-corky' ? 116 : 124) +
+                rngBark.fork(`nascent-sec:${sec}`).range(-5, 6),
+              110,
+              134
+            )
+          );
+
+      const runOuter: PolarPoint[] = [];
+      const runInner: PolarPoint[] = [];
+
+      for (let k = 0; k <= steps; k++) {
+        const u = k / steps;
+        const theta = secStart + u * secSpan;
+        const z0 = sampleBarkGrid(zInArr0, theta);
+        const z1 = sampleBarkGrid(zOutArr0, theta);
+        const zSurf = sampleBarkGrid(zSurfArr, theta);
+        const rPh = sampleBarkGrid(phloemOuterRadiusMm, theta);
+
+        const locThick = Math.max(0.2, z1 - z0);
+        const isExterior = z1 >= zSurf - 0.08;
+        const padOut = isExterior ? 0.85 : 0;
+        const padIn = -0.06;
+
+        const waveOut =
+          isExterior
+            ? 0
+            : Math.min(locThick, 1.35) *
+              0.095 *
+              internalNoise.polarFbm(theta, 11.0, outSeed0, 2);
+
+        runInner.push({ theta, r: rPh + z0 + padIn });
+        runOuter.push({ theta, r: rPh + z1 + padOut + waveOut });
+      }
+
+      rhytidomeCells.push({
+        pointsPolar: [...runOuter, ...runInner.slice().reverse()],
+        fillGray: sectorGray,
+        strokeGray: 32,
+        strokeWidthMm: clamp(nominalThick0 * 0.062, 0.05, 0.14),
+      });
+    }
+  }
+
   if (morphology === 'furrowed-corky') {
-    for (let s = 0; s < numActive; s++) {
+    for (let s = 1; s < numActive; s++) {
       const coh = activeCohorts[s];
       const rngC = rngBark.fork(`df-cohort:${coh.cohortIdx}`);
       const zInArr = cohortZ[s];
@@ -979,7 +1081,7 @@ export function buildAnatomicalBarkGeometry(
       flushSeam();
     }
   } else {
-    for (let s = 0; s < numActive; s++) {
+    for (let s = 1; s < numActive; s++) {
       const coh = activeCohorts[s];
       const rngC = rngBark.fork(`pp-cohort:${coh.cohortIdx}`);
       const zInArr = cohortZ[s];
@@ -1080,20 +1182,18 @@ export function buildAnatomicalBarkGeometry(
           const sharedAmpIn = Math.min(locThick, 1.35) * 0.095;
           const sharedAmpOut = Math.min(locThick, 1.35) * 0.095;
           const waveIn =
-            s === 0
-              ? 0
-              : sharedAmpIn *
-                internalNoise.polarFbm(theta, 11.0, inInterfaceSeed, 2);
+            sharedAmpIn *
+            internalNoise.polarFbm(theta, 11.0, inInterfaceSeed, 2);
           const waveOut =
             sharedAmpOut *
             internalNoise.polarFbm(theta, 11.0, outInterfaceSeed, 2);
 
           const isExteriorLayer = z1 >= zSurf - 0.08;
           const padOut = isExteriorLayer ? 0.85 : 0;
-          const padIn = s === 0 ? -0.06 : 0;
+          const padIn = 0;
 
           const rIn =
-            rPh + z0 + padIn + waveIn - (s === 0 ? 0 : locThick * 0.025 * scallop);
+            rPh + z0 + padIn + waveIn - locThick * 0.025 * scallop;
           const rOut =
             rPh + z1 + padOut + waveOut + locThick * 0.035 * scallop;
 

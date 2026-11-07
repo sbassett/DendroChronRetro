@@ -646,4 +646,111 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
       }
     }
   });
+
+  it('produces tabular flat-topped Ponderosa tectonic plates and anatomically layered innermost bark', () => {
+    const env = makeMockEnvironment(9.5, 680, 12, 195);
+
+    const pp = simulateTreeCrossSection(
+      {
+        species: 'ponderosa-pine',
+        latitude: 44.4622,
+        longitude: -121.6358,
+        totalAge: 140,
+        deathYear: 2026,
+      },
+      env
+    );
+    const df = simulateTreeCrossSection(
+      {
+        species: 'douglas-fir',
+        latitude: 44.4622,
+        longitude: -121.6358,
+        totalAge: 140,
+        deathYear: 2026,
+      },
+      env
+    );
+
+    const ppRhyt = pp.bark.outerBarkRadiusMm.map(
+      (r, i) => r - pp.bark.phloemOuterRadiusMm[i]
+    );
+    const dfRhyt = df.bark.outerBarkRadiusMm.map(
+      (r, i) => r - df.bark.phloemOuterRadiusMm[i]
+    );
+    const ppMaxRhyt = Math.max(...ppRhyt);
+    const dfMaxRhyt = Math.max(...dfRhyt);
+
+    // Tabular Ponderosa armor maintains broad flat plateaus (>58% of circumference above 78% of max height),
+    // sharply contrasting with V-ridged Douglas-fir cork furrows
+    const ppPlateauFrac =
+      ppRhyt.filter((h) => h >= 0.78 * ppMaxRhyt).length / ppRhyt.length;
+    const dfPlateauFrac =
+      dfRhyt.filter((h) => h >= 0.78 * dfMaxRhyt).length / dfRhyt.length;
+    expect(ppPlateauFrac).toBeGreaterThan(0.58);
+    expect(ppPlateauFrac).toBeGreaterThan(dfPlateauFrac * 1.8);
+
+    // Living inner bark (secondary phloem) is thin, strictly positive outside wood cambium,
+    // and gently compressed beneath deep fissures compared to plate plateaus
+    expect(pp.bark.phloemThicknessMm).toBeGreaterThanOrEqual(0.95);
+    expect(pp.bark.phloemThicknessMm).toBeLessThanOrEqual(2.7);
+
+    const sampleWoodAt = (theta: number): number => {
+      const n = pp.anglesRad.length;
+      const twoPi = 2 * Math.PI;
+      const pos = (((theta % twoPi) + twoPi) % twoPi) / twoPi * n;
+      const i0 = Math.floor(pos) % n;
+      const i1 = (i0 + 1) % n;
+      const f = pos - Math.floor(pos);
+      return (
+        pp.bark.cambiumRadiusMm[i0] * (1 - f) +
+        pp.bark.cambiumRadiusMm[i1] * f
+      );
+    };
+
+    const ppPhloemThick = pp.bark.barkAnglesRad.map(
+      (th, i) => pp.bark.phloemOuterRadiusMm[i] - sampleWoodAt(th)
+    );
+    for (const ptThick of ppPhloemThick) {
+      expect(ptThick).toBeGreaterThan(0.65);
+    }
+    const minRhytIdx = ppRhyt.indexOf(Math.min(...ppRhyt));
+    const maxRhytIdx = ppRhyt.indexOf(ppMaxRhyt);
+    expect(ppPhloemThick[minRhytIdx]).toBeLessThan(ppPhloemThick[maxRhytIdx]);
+
+    // Innermost dead rhytidome cohort cells sit flush against the active innermost periderm
+    let minAbovePhloemMm = Infinity;
+    const twoPi = 2 * Math.PI;
+    for (const cell of pp.bark.rhytidomeCells) {
+      for (const pt of cell.pointsPolar) {
+        const idx =
+          Math.floor(
+            ((((pt.theta % twoPi) + twoPi) % twoPi) / twoPi) *
+              pp.bark.barkAnglesRad.length
+          ) % pp.bark.barkAnglesRad.length;
+        const distAbovePhloem = Math.abs(pt.r - pp.bark.phloemOuterRadiusMm[idx]);
+        if (distAbovePhloem < minAbovePhloemMm) {
+          minAbovePhloemMm = distAbovePhloem;
+        }
+      }
+    }
+    expect(minAbovePhloemMm).toBeLessThan(0.15);
+
+    // SVG z-order renders #bark-layer (#inner-phloem + #phloem-rays) beneath #annual-rings,
+    // and #vascular-cambium ON TOP of #annual-rings so outermost latewood never clips the cambium stroke
+    const svg = generateCrossSectionSvg(pp, {
+      showBark: true,
+      showMedullaryRays: true,
+      showAnnotations: false,
+      transparentBackground: false,
+    });
+    const innerPhloemIdx = svg.indexOf('id="inner-phloem"');
+    const phloemRaysIdx = svg.indexOf('id="phloem-rays"');
+    const ringsIdx = svg.indexOf('id="annual-rings"');
+    const cambiumIdx = svg.indexOf('id="vascular-cambium"');
+
+    expect(innerPhloemIdx).toBeGreaterThan(0);
+    expect(phloemRaysIdx).toBeGreaterThan(innerPhloemIdx);
+    expect(ringsIdx).toBeGreaterThan(phloemRaysIdx);
+    expect(cambiumIdx).toBeGreaterThan(ringsIdx);
+  });
 });

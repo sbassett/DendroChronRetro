@@ -219,11 +219,16 @@ export function generateCrossSectionSvgBundle(
     );
   }
 
-  // Definitions: wood clip path + annular rhytidome clip path
+  // Definitions: wood clip path + annular phloem & rhytidome clip paths
   const cambiumSmoothD = polarSmoothClosedPath(
     sim.bark.cambiumRadiusMm,
     sim.anglesRad,
     1
+  );
+  const cambiumReverseD = polarPolygonClosedPath(
+    sim.bark.cambiumRadiusMm,
+    sim.anglesRad,
+    true
   );
   const outerBarkD = polarPolygonClosedPath(
     sim.bark.outerBarkRadiusMm,
@@ -241,11 +246,51 @@ export function generateCrossSectionSvgBundle(
     true
   );
 
+  // Precompute aligned xylem + phloem ray paths so medullary rays continue cleanly across the cambium
+  let woodRayPaths = '';
+  let phloemRayPaths = '';
+  if (options.showMedullaryRays && sim.rings.length > 0) {
+    const rayRng = new SeededRNG(`${sim.seedKey}:rays`);
+    const rayCount = Math.min(240, Math.max(96, Math.round(maxSpan * 0.48)));
+    const wPaths: string[] = [];
+    const pPaths: string[] = [];
+    const maxWoodR = Math.max(...sim.bark.cambiumRadiusMm);
+    const maxPhloemR = Math.max(...sim.bark.phloemOuterRadiusMm);
+
+    for (let rIdx = 0; rIdx < rayCount; rIdx++) {
+      const baseTheta =
+        (rIdx / rayCount) * 2 * Math.PI + rayRng.range(-0.012, 0.012);
+      const startFrac =
+        rIdx % 3 === 0
+          ? 0.03
+          : rIdx % 3 === 1
+            ? rayRng.range(0.18, 0.45)
+            : rayRng.range(0.45, 0.75);
+      const cosT = Math.cos(baseTheta);
+      const sinT = Math.sin(baseTheta);
+      const rStart = Math.max(sim.pithRadiusMm * 1.2, maxWoodR * startFrac);
+      const rWoodEnd = maxWoodR * 1.05;
+      wPaths.push(
+        `M${(rStart * cosT).toFixed(2)} ${(rStart * sinT).toFixed(2)}L${(rWoodEnd * cosT).toFixed(2)} ${(rWoodEnd * sinT).toFixed(2)}`
+      );
+      if (options.showBark && rIdx % 2 === 0) {
+        const rPhloemStart = Math.max(0.5, sim.pithRadiusMm);
+        const rPhloemEnd = maxPhloemR * 1.03;
+        pPaths.push(
+          `M${(rPhloemStart * cosT).toFixed(2)} ${(rPhloemStart * sinT).toFixed(2)}L${(rPhloemEnd * cosT).toFixed(2)} ${(rPhloemEnd * sinT).toFixed(2)}`
+        );
+      }
+    }
+    woodRayPaths = wPaths.join('');
+    phloemRayPaths = pPaths.join('');
+  }
+
   elements.push(
     `<defs>` +
       `<clipPath id="wood-clip"><path d="${cambiumSmoothD}"/></clipPath>` +
       (options.showBark
-        ? `<clipPath id="rhytidome-clip"><path clip-rule="evenodd" d="${outerBarkD}${phloemReverseD}"/></clipPath>`
+        ? `<clipPath id="rhytidome-clip"><path clip-rule="evenodd" d="${outerBarkD}${phloemReverseD}"/></clipPath>` +
+          `<clipPath id="phloem-clip"><path clip-rule="evenodd" d="${phloemOuterD}${cambiumReverseD}"/></clipPath>`
         : '') +
       `</defs>`
   );
@@ -280,26 +325,28 @@ export function generateCrossSectionSvgBundle(
     elements.push(`</g>`);
 
     // 1c. Crisp weathered outer bark surface & fissure floor outline
-    const outerStrokeW = Math.max(0.22, maxSpan * 0.0016);
+    const outerStrokeW = Math.min(0.85, Math.max(0.22, maxSpan * 0.0014));
     elements.push(
       `<path d="${outerBarkD}" fill="none" stroke="${grayHex(profile.palette.barkFissureGray)}" stroke-width="${outerStrokeW.toFixed(2)}" stroke-linejoin="round"/>`
     );
 
-    // 1d. Living inner bark (secondary phloem) bounded on outside by dark active innermost periderm
-    const innerPeridermW = Math.max(0.2, maxSpan * 0.0013);
-    elements.push(
-      `<path id="inner-phloem" d="${phloemOuterD}" fill="#8f8f8a" stroke="#1e1e1e" stroke-width="${innerPeridermW.toFixed(2)}" stroke-linejoin="round"/>`
+    // 1d. Living inner bark (conducting + non-conducting secondary phloem) bounded on its
+    // exterior by the crisp dark active innermost periderm (phellogen + phellem)
+    const innerPeridermW = Math.min(
+      0.52,
+      Math.max(0.16, sim.bark.phloemThicknessMm * 0.18)
     );
+    elements.push(
+      `<path id="inner-phloem" d="${phloemOuterD}" fill="#d0cec6" stroke="#181818" stroke-width="${innerPeridermW.toFixed(2)}" stroke-linejoin="round"/>`
+    );
+    if (phloemRayPaths) {
+      const phloemRayW = Math.max(0.08, sim.bark.phloemThicknessMm * 0.075);
+      elements.push(
+        `<path id="phloem-rays" pointer-events="none" clip-path="url(#phloem-clip)" d="${phloemRayPaths}" fill="none" stroke="#4a4944" stroke-width="${phloemRayW.toFixed(2)}" stroke-opacity="0.22"/>`
+      );
+    }
 
-    // Thin vascular cambium boundary line
-    elements.push(
-      `<path d="${cambiumSmoothD}" fill="none" stroke="#3a3a38" stroke-width="${Math.max(0.14, maxSpan * 0.0008).toFixed(2)}"/>`
-    );
     elements.push(`</g>`);
-  } else {
-    elements.push(
-      `<path d="${cambiumSmoothD}" fill="none" stroke="#222222" stroke-width="${Math.max(0.3, maxSpan * 0.002).toFixed(2)}"/>`
-    );
   }
 
   // Layer 2: Smooth Cubic-Bezier Annual Growth Rings from outermost (N) inward to (1)
@@ -386,37 +433,20 @@ export function generateCrossSectionSvgBundle(
   elements.push(`</g>`);
 
   // Layer 3: Subtle Radial Medullary Rays
-  if (options.showMedullaryRays && sim.rings.length > 0) {
-    const rayRng = new SeededRNG(`${sim.seedKey}:rays`);
-    const rayCount = Math.min(240, Math.max(96, Math.round(maxSpan * 0.48)));
-    const rayPaths: string[] = [];
-    const maxOuterR = Math.max(...sim.bark.cambiumRadiusMm);
-
-    for (let rIdx = 0; rIdx < rayCount; rIdx++) {
-      const baseTheta =
-        (rIdx / rayCount) * 2 * Math.PI + rayRng.range(-0.012, 0.012);
-      const startFrac =
-        rIdx % 3 === 0
-          ? 0.03
-          : rIdx % 3 === 1
-            ? rayRng.range(0.18, 0.45)
-            : rayRng.range(0.45, 0.75);
-      const rStart = Math.max(sim.pithRadiusMm * 1.2, maxOuterR * startFrac);
-      const rEnd = maxOuterR * 1.05;
-      const x1 = rStart * Math.cos(baseTheta);
-      const y1 = rStart * Math.sin(baseTheta);
-      const x2 = rEnd * Math.cos(baseTheta);
-      const y2 = rEnd * Math.sin(baseTheta);
-      rayPaths.push(
-        `M${x1.toFixed(2)} ${y1.toFixed(2)}L${x2.toFixed(2)} ${y2.toFixed(2)}`
-      );
-    }
-
+  if (woodRayPaths) {
     const rayStrokeW = Math.max(0.07, maxSpan * 0.00055);
     elements.push(
-      `<path id="medullary-rays" pointer-events="none" clip-path="url(#wood-clip)" d="${rayPaths.join('')}" fill="none" stroke="#1f1f1f" stroke-width="${rayStrokeW.toFixed(2)}" stroke-opacity="0.11"/>`
+      `<path id="medullary-rays" pointer-events="none" clip-path="url(#wood-clip)" d="${woodRayPaths}" fill="none" stroke="#1f1f1f" stroke-width="${rayStrokeW.toFixed(2)}" stroke-opacity="0.11"/>`
     );
   }
+
+  // Layer 3b: Vascular Cambium Meristem Boundary (drawn above outermost latewood so stroke is unclipped)
+  const cambiumStrokeW = options.showBark
+    ? Math.min(0.36, Math.max(0.13, sim.bark.phloemThicknessMm * 0.13))
+    : Math.max(0.3, maxSpan * 0.002);
+  elements.push(
+    `<path id="vascular-cambium" pointer-events="none" d="${cambiumSmoothD}" fill="none" stroke="${options.showBark ? '#2d2d2b' : '#222222'}" stroke-width="${cambiumStrokeW.toFixed(2)}"/>`
+  );
 
   // Layer 4: Scientific Scale Bar, Orientation Compass, & Specimen Metadata
   if (options.showAnnotations) {

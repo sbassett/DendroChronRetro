@@ -1,11 +1,8 @@
 import {
-  isWithinSpeciesNativeRange,
   LOCATOR_MAP_HEIGHT,
   LOCATOR_MAP_WIDTH,
-  NA_GRATICULE_PATH,
-  NA_LAKES_PATH,
+  NA_GREAT_LAKES_PATH,
   NA_LAND_PATH,
-  NA_STATES_PATH,
   projectToLocatorMap,
   SPECIES_NATIVE_RANGE_PATH,
 } from './locatorMapData';
@@ -175,32 +172,30 @@ export function generateCrossSectionSvgBundle(
   const vbY = minY - pad;
   const vbH = spanY + pad * 2 + bottomExtra;
 
-  // Size top-left locator card and expand horizontal margin symmetrically so it never touches the bark
-  const locMargin = pad * 0.48;
-  const locW = maxSpan * 0.3;
-  const locHeaderH = locW * 0.115;
-  const locMapH = locW * (LOCATOR_MAP_HEIGHT / LOCATOR_MAP_WIDTH);
-  const locFooterH = locW * 0.11;
-  const locCardH = locHeaderH + locMapH + locFooterH;
+  // Frameless Tuftean top-left North America silhouette nestled along the upper-left arc of the specimen
+  const locMargin = pad * 0.36;
+  const locW = maxSpan * 0.27;
+  const locH = locW * (LOCATOR_MAP_HEIGHT / LOCATOR_MAP_WIDTH);
   const locY = vbY + locMargin;
 
   let padX = pad;
   if (showLocator) {
-    const locGap = maxSpan * 0.045;
-    const bandBottom = locY + locCardH + locGap;
-    let minTreeXInBand = Infinity;
+    const locGap = maxSpan * 0.038;
+    const bandBottom = locY + locH + locGap;
     for (let i = 0; i < outerRefRadii.length; i++) {
       const r = outerRefRadii[i];
       const theta = outerRefAngles[i];
       const y = r * Math.sin(theta);
       if (y <= bandBottom) {
         const x = r * Math.cos(theta);
-        if (x < minTreeXInBand) minTreeXInBand = x;
+        // North America's eastern coastline tapers westward from Newfoundland (top) to Florida/Yucatan (bottom)
+        const yFrac = Math.max(0, Math.min(1, (y - locY) / locH));
+        const continentRightFrac =
+          yFrac <= 0.48 ? 0.99 : yFrac <= 0.82 ? 0.83 : 0.75;
+        const targetVbX =
+          x - locGap - locW * continentRightFrac - locMargin;
+        padX = Math.max(padX, minX - targetVbX);
       }
-    }
-    if (minTreeXInBand < Infinity) {
-      const targetVbX = minTreeXInBand - locGap - locW - locMargin;
-      padX = Math.max(pad, minX - targetVbX);
     }
   }
 
@@ -218,7 +213,7 @@ export function generateCrossSectionSvgBundle(
     );
   }
 
-  // Definitions: wood clip path + annular rhytidome clip path + locator map frame clip
+  // Definitions: wood clip path + annular rhytidome clip path
   const cambiumSmoothD = polarSmoothClosedPath(
     sim.bark.cambiumRadiusMm,
     sim.anglesRad,
@@ -245,9 +240,6 @@ export function generateCrossSectionSvgBundle(
       `<clipPath id="wood-clip"><path d="${cambiumSmoothD}"/></clipPath>` +
       (options.showBark
         ? `<clipPath id="rhytidome-clip"><path clip-rule="evenodd" d="${outerBarkD}${phloemReverseD}"/></clipPath>`
-        : '') +
-      (showLocator
-        ? `<clipPath id="locator-map-clip"><rect x="0" y="0" width="${LOCATOR_MAP_WIDTH}" height="${LOCATOR_MAP_HEIGHT}"/></clipPath>`
         : '') +
       `</defs>`
   );
@@ -468,104 +460,31 @@ export function generateCrossSectionSvgBundle(
     elements.push(`</g>`);
   }
 
-  // Layer 5: Top-Left North America & Species Native Range Locator Map
+  // Layer 5: Minimalist Tuftean Top-Left Locator Map (frameless North America, native range, specimen dot)
   if (showLocator) {
-    const frameStrokeW = Math.max(0.22, maxSpan * 0.0018);
-    const cardRx = locW * 0.02;
-    const locMapY = locY + locHeaderH;
-    const locFooterY = locMapY + locMapH;
     const mapScale = locW / LOCATOR_MAP_WIDTH;
-
-    const headerFont = locHeaderH * 0.45;
-    const footerFont = locFooterH * 0.39;
-    const shortSciName =
-      sim.params.species === 'douglas-fir' ? 'P. menziesii' : 'P. ponderosa';
-
     const projPin = projectToLocatorMap(
-      sim.params.latitude,
-      sim.params.longitude
-    );
-    const inNativeRange = isWithinSpeciesNativeRange(
-      sim.params.species,
       sim.params.latitude,
       sim.params.longitude
     );
     const px = projPin.inFrame ? projPin.x : projPin.clampedX;
     const py = projPin.inFrame ? projPin.y : projPin.clampedY;
-    const pinStatusLabel = inNativeRange
-      ? 'In range'
-      : projPin.inFrame
-        ? 'Out of range'
-        : 'Off-map';
+    const lakeFill = options.transparentBackground ? '#ffffff' : '#f6f6f4';
+    const lakeOpacity = options.transparentBackground ? '0.82' : '1';
+    const haloHex = options.transparentBackground ? '#ffffff' : '#f6f6f4';
 
-    const swSize = locFooterH * 0.42;
-    const swX = locX + locW * 0.038;
-    const swY = locFooterY + (locFooterH - swSize) * 0.5;
-    const footerTextY = locFooterY + locFooterH * 0.65;
-
-    const legPinR = swSize * 0.46;
-    const legPinX =
-      locX +
-      locW * 0.962 -
-      pinStatusLabel.length * footerFont * 0.61 -
-      legPinR * 1.7;
-    const legPinY = locFooterY + locFooterH * 0.5;
+    const pinMarkup = projPin.inFrame
+      ? `<circle id="locator-cookie-pin" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="15.5" fill="#0d0d0d" stroke="${haloHex}" stroke-width="7"/>`
+      : `<circle id="locator-cookie-pin" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="15" fill="none" stroke="#1c1c1c" stroke-width="5" stroke-dasharray="8 6"/>`;
 
     elements.push(
-      `<g id="locator-map" pointer-events="none" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">`
-    );
-
-    // Outer card shell
-    elements.push(
-      `<rect x="${locX.toFixed(2)}" y="${locY.toFixed(2)}" width="${locW.toFixed(2)}" height="${locCardH.toFixed(2)}" rx="${cardRx.toFixed(2)}" fill="#f9f9f7" fill-opacity="0.96" stroke="#2a2a28" stroke-width="${frameStrokeW.toFixed(2)}"/>`
-    );
-
-    // Header bar
-    elements.push(
-      `<text x="${(locX + locW * 0.038).toFixed(2)}" y="${(locY + locHeaderH * 0.68).toFixed(2)}" font-size="${headerFont.toFixed(2)}" fill="#181818"><tspan font-style="italic" font-weight="700">${shortSciName}</tspan> Range</text>` +
-        `<text x="${(locX + locW * 0.962).toFixed(2)}" y="${(locY + locHeaderH * 0.68).toFixed(2)}" text-anchor="end" font-size="${(headerFont * 0.82).toFixed(2)}" font-weight="600" fill="#5c5c57">N. AMERICA</text>`
-    );
-
-    // Projected North America + USGS Little Species Range + Specimen Bullseye
-    elements.push(
-      `<g transform="translate(${locX.toFixed(2)} ${locMapY.toFixed(2)}) scale(${mapScale.toFixed(5)})" clip-path="url(#locator-map-clip)">` +
-        `<rect width="${LOCATOR_MAP_WIDTH}" height="${LOCATOR_MAP_HEIGHT}" fill="#e9e9e5"/>` +
-        `<path d="${NA_GRATICULE_PATH}" fill="none" stroke="#d5d5cf" stroke-width="2.6"/>` +
-        `<path d="${NA_LAND_PATH}" fill="#ffffff" stroke="#666661" stroke-width="3.2" stroke-linejoin="round"/>` +
-        `<path d="${NA_STATES_PATH}" fill="none" stroke="#c8c8c2" stroke-width="1.9" stroke-linejoin="round"/>` +
-        `<path d="${NA_LAKES_PATH}" fill="#e9e9e5" stroke="#787872" stroke-width="2.2" stroke-linejoin="round"/>` +
-        `<path data-species-range="${sim.params.species}" fill-rule="evenodd" d="${SPECIES_NATIVE_RANGE_PATH[sim.params.species]}" fill="#3b3b38" fill-opacity="0.58" stroke="#1b1b19" stroke-width="2.6" stroke-linejoin="round"/>` +
-        `<g id="locator-cookie-marker">` +
-        `<line x1="${px.toFixed(1)}" y1="${(py - 42).toFixed(1)}" x2="${px.toFixed(1)}" y2="${(py + 42).toFixed(1)}" stroke="#ffffff" stroke-width="8" stroke-linecap="round"/>` +
-        `<line x1="${(px - 42).toFixed(1)}" y1="${py.toFixed(1)}" x2="${(px + 42).toFixed(1)}" y2="${py.toFixed(1)}" stroke="#ffffff" stroke-width="8" stroke-linecap="round"/>` +
-        `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="26" fill="none" stroke="#ffffff" stroke-width="12"/>` +
-        `<line x1="${px.toFixed(1)}" y1="${(py - 40).toFixed(1)}" x2="${px.toFixed(1)}" y2="${(py - 25).toFixed(1)}" stroke="#080808" stroke-width="4.6" stroke-linecap="round"/>` +
-        `<line x1="${px.toFixed(1)}" y1="${(py + 25).toFixed(1)}" x2="${px.toFixed(1)}" y2="${(py + 40).toFixed(1)}" stroke="#080808" stroke-width="4.6" stroke-linecap="round"/>` +
-        `<line x1="${(px - 40).toFixed(1)}" y1="${py.toFixed(1)}" x2="${(px - 25).toFixed(1)}" y2="${py.toFixed(1)}" stroke="#080808" stroke-width="4.6" stroke-linecap="round"/>` +
-        `<line x1="${(px + 25).toFixed(1)}" y1="${py.toFixed(1)}" x2="${(px + 40).toFixed(1)}" y2="${py.toFixed(1)}" stroke="#080808" stroke-width="4.6" stroke-linecap="round"/>` +
-        `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="25" fill="none" stroke="#080808" stroke-width="6.5"${!projPin.inFrame ? ' stroke-dasharray="10 7"' : ''}/>` +
-        `<circle id="locator-cookie-pin" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="11" fill="#080808" stroke="#ffffff" stroke-width="3.8"/>` +
-        `</g>` +
+      `<g id="locator-map" pointer-events="none" transform="translate(${locX.toFixed(2)} ${locY.toFixed(2)}) scale(${mapScale.toFixed(5)})">` +
+        `<path d="${NA_LAND_PATH}" fill="#ebebe7" fill-opacity="0.72" stroke="#9b9b94" stroke-width="2.2" stroke-linejoin="round"/>` +
+        `<path d="${NA_GREAT_LAKES_PATH}" fill="${lakeFill}" fill-opacity="${lakeOpacity}" stroke="#9b9b94" stroke-width="1.8" stroke-linejoin="round"/>` +
+        `<path data-species-range="${sim.params.species}" fill-rule="evenodd" d="${SPECIES_NATIVE_RANGE_PATH[sim.params.species]}" fill="#494945" fill-opacity="0.58"/>` +
+        pinMarkup +
         `</g>`
     );
-
-    // Horizontal divider rules around map viewport + re-stroked outer card border for crisp corners
-    elements.push(
-      `<line x1="${locX.toFixed(2)}" y1="${locMapY.toFixed(2)}" x2="${(locX + locW).toFixed(2)}" y2="${locMapY.toFixed(2)}" stroke="#2a2a28" stroke-width="${(frameStrokeW * 0.78).toFixed(2)}"/>` +
-        `<line x1="${locX.toFixed(2)}" y1="${locFooterY.toFixed(2)}" x2="${(locX + locW).toFixed(2)}" y2="${locFooterY.toFixed(2)}" stroke="#2a2a28" stroke-width="${(frameStrokeW * 0.78).toFixed(2)}"/>` +
-        `<rect x="${locX.toFixed(2)}" y="${locY.toFixed(2)}" width="${locW.toFixed(2)}" height="${locCardH.toFixed(2)}" rx="${cardRx.toFixed(2)}" fill="none" stroke="#2a2a28" stroke-width="${frameStrokeW.toFixed(2)}"/>`
-    );
-
-    // Footer legend: Native range swatch + Cookie bullseye status
-    elements.push(
-      `<rect x="${swX.toFixed(2)}" y="${swY.toFixed(2)}" width="${swSize.toFixed(2)}" height="${swSize.toFixed(2)}" fill="#3b3b38" fill-opacity="0.62" stroke="#1b1b19" stroke-width="${(frameStrokeW * 0.7).toFixed(2)}"/>` +
-        `<text x="${(swX + swSize * 1.45).toFixed(2)}" y="${footerTextY.toFixed(2)}" font-size="${footerFont.toFixed(2)}" fill="#333330">Native range</text>` +
-        `<circle cx="${legPinX.toFixed(2)}" cy="${legPinY.toFixed(2)}" r="${legPinR.toFixed(2)}" fill="none" stroke="#080808" stroke-width="${(frameStrokeW * 0.85).toFixed(2)}"/>` +
-        `<circle cx="${legPinX.toFixed(2)}" cy="${legPinY.toFixed(2)}" r="${(legPinR * 0.42).toFixed(2)}" fill="#080808"/>` +
-        `<text x="${(locX + locW * 0.962).toFixed(2)}" y="${footerTextY.toFixed(2)}" text-anchor="end" font-size="${footerFont.toFixed(2)}" font-weight="600" fill="#181818">${pinStatusLabel}</text>`
-    );
-
-    elements.push(`</g>`);
   }
 
   // Standalone SVG export keeps exact bounding viewBox crop

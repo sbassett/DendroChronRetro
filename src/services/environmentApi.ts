@@ -204,14 +204,19 @@ function buildOfflineClimatology(
 ): CachedClimateGrid {
   const absLat = Math.abs(lat);
   const hemisphereSign = lat >= 0 ? 1 : -1;
-  const seaLevelMeanT = 27.5 - 0.56 * absLat;
-  const meanAnnualT = seaLevelMeanT - (elevationM / 1000) * 5.8;
+  // Sea-level equivalent temperature across Western North America (~22°C at 32°N to ~9°C at 49°N)
+  const seaLevelMeanT = 44.5 - 0.72 * absLat;
+  const meanAnnualT = seaLevelMeanT - (elevationM / 1000) * 5.0;
   const seasonalAmp = clamp(4 + 0.28 * absLat, 5, 19);
 
   const isMaritimeWest = lon < -121.8 && lat > 37 && lat < 52;
   const baseAnnualPrecip = isMaritimeWest
-    ? 1650
-    : clamp(580 - (absLat - 42) * 8 + elevationM * 0.22, 220, 1400);
+    ? clamp(1350 + (lat - 37) * 50 + elevationM * 0.35, 1100, 2600)
+    : clamp(
+        380 - Math.abs(lon - -117) * 20 + (lat > 42 ? 70 : 0) + elevationM * 0.08,
+        250,
+        750
+      );
 
   const climMeanTemp: number[] = [];
   const climStdTemp: number[] = [];
@@ -246,7 +251,14 @@ function buildOfflineClimatology(
 
 // Pre-seed default benchmark locations so initial frame renders instantly with 0ms delay
 (function seedDefaultCaches() {
-  const seedSite = (lat: number, lon: number, elevM: number, slopeDeg: number, aspectDeg: number) => {
+  const seedSite = (
+    lat: number,
+    lon: number,
+    elevM: number,
+    slopeDeg: number,
+    aspectDeg: number,
+    climate?: CachedClimateGrid
+  ) => {
     terrainCache.set(terrainCacheKey(lat, lon), {
       info: {
         elevationM: elevM,
@@ -256,13 +268,35 @@ function buildOfflineClimatology(
       },
       isFallback: false,
     });
-    climateCache.set(climateCacheKey(lat, lon), buildOfflineClimatology(lat, lon, elevM));
+    climateCache.set(
+      climateCacheKey(lat, lon),
+      climate ?? buildOfflineClimatology(lat, lon, elevM)
+    );
   };
 
-  // Flagstaff / Coconino Plateau (Ponderosa Pine default benchmark)
-  seedSite(35.2645, -111.7442, 2185, 3.8, 195);
-  // H.J. Andrews Forest (Douglas-fir default benchmark)
-  seedSite(44.2124, -122.2557, 454, 21.4, 268);
+  // Flagstaff / Coconino Plateau (Ponderosa Pine default benchmark, 2,185 m)
+  // NOAA / NASA POWER 30-year normals: Mean annual temp 8.9°C (48.0°F), Annual precip 462 mm (18.2 in)
+  seedSite(35.2645, -111.7442, 2185, 3.8, 195, {
+    observedYears: new Map(),
+    climMeanTemp: [-1.2, 0.1, 3.5, 7.2, 12.1, 17.6, 19.8, 18.9, 15.1, 9.3, 3.2, -0.9],
+    climStdTemp: [2.1, 2.0, 1.8, 1.5, 1.4, 1.4, 1.2, 1.1, 1.3, 1.6, 1.9, 2.2],
+    climMeanPrecip: [42, 38, 36, 22, 16, 10, 62, 74, 40, 36, 32, 44],
+    climStdPrecip: [24, 22, 20, 15, 12, 8, 32, 36, 25, 22, 20, 26],
+    gridElevationM: 2185,
+    source: 'offline-climatology',
+  });
+
+  // H.J. Andrews Forest (Douglas-fir default benchmark, 454 m)
+  // PRISM / NOAA 30-year normals: Mean annual temp 10.1°C (50.2°F), Annual precip 1,465 mm (57.7 in)
+  seedSite(44.2124, -122.2557, 454, 21.4, 268, {
+    observedYears: new Map(),
+    climMeanTemp: [2.8, 4.1, 6.2, 8.8, 12.4, 15.6, 19.2, 19.0, 15.4, 10.2, 5.5, 2.5],
+    climStdTemp: [1.8, 1.6, 1.4, 1.3, 1.4, 1.5, 1.3, 1.2, 1.3, 1.4, 1.7, 1.9],
+    climMeanPrecip: [225, 178, 162, 108, 74, 46, 18, 20, 50, 122, 218, 245],
+    climStdPrecip: [85, 72, 65, 48, 38, 26, 14, 15, 32, 60, 82, 95],
+    gridElevationM: 454,
+    source: 'offline-climatology',
+  });
 })();
 
 /**
@@ -276,7 +310,7 @@ async function fetchNasaPowerClimate(
 ): Promise<CachedClimateGrid | null> {
   const key = climateCacheKey(lat, lon);
   const hit = climateCache.get(key);
-  if (hit) return hit;
+  if (hit && hit.source === 'nasa-power-merra2') return hit;
 
   const active = climateInFlight.get(key);
   if (active) return active;

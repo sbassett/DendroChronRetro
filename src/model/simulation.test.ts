@@ -801,6 +801,23 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
     expect(yearsSW).toContain(1956);
     expect(yearsSW).toContain(1934);
 
+    // Default pre-seeded Coconino Plateau benchmark must be ecologically viable for Ponderosa Pine
+    const cachedFlagstaff = getCachedEnvironmentDataset(35.2645, -111.7442, 1776, 2026);
+    expect(cachedFlagstaff).not.toBeNull();
+    const simCachedFlagstaff = simulateTreeCrossSection(
+      {
+        species: 'ponderosa-pine',
+        latitude: 35.2645,
+        longitude: -111.7442,
+        totalAge: 250,
+        deathYear: 2026,
+      },
+      cachedFlagstaff!
+    );
+    expect(simCachedFlagstaff.viability.viable).toBe(true);
+    expect(simCachedFlagstaff.viability.stressLevel).not.toBe('unsuitable');
+    expect(simCachedFlagstaff.viability.summary).not.toContain('severely stunted');
+
     // Cascades (1963–2026) must include 1977 West Coast Drought and 2015 Snow Drought
     const landmarksNW = getRelevantClimateLandmarks(1963, 2026, 44.2124, -122.2557);
     const yearsNW = landmarksNW.map((lm) => lm.year);

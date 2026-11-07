@@ -532,9 +532,10 @@ export function buildAnatomicalBarkGeometry(
     stageEndCohortR[m] = rCurrentCohort;
     for (let k = m - 1; k >= 0; k--) {
       const st = ancestry[k];
+      const rCohortExposure = Math.max(rBirthLocal, st.rEndPhloemMm);
       const dRSinceSplit = Math.max(
         0,
-        st.currentSplitPhloemMm - st.rEndPhloemMm
+        st.currentSplitPhloemMm - rCohortExposure
       );
       const dRSinceCohortCleaved = Math.max(
         0,
@@ -551,9 +552,13 @@ export function buildAnatomicalBarkGeometry(
       );
     }
     stageStartCohortR[0] = ancestry[0].rStartPhloemMm;
+    const dRSincePrimaryExposure = Math.max(
+      0,
+      rCurrentCohort - Math.max(rBirthLocal, ancestry[0].rStartPhloemMm)
+    );
     stageCleavedGrowthR[0] = Math.max(
       0,
-      rCurrentCohort - ancestry[0].rStartPhloemMm
+      dRSincePrimaryExposure - dRNeededToReachCohort
     );
     for (let k = 1; k <= m; k++) {
       stageStartCohortR[k] = stageEndCohortR[k - 1];

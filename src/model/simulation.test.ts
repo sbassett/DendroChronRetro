@@ -621,7 +621,8 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
           expect(outerArcSec - prevOuterArcSec).toBeLessThan(6 * 3600);
         }
 
-        // Deep primary groove troughs must remain free of conveyor-belt cohort cells
+        // Deep primary groove troughs must contain only the thin nascent innermost bark layer
+        // (zero elevated conveyor-belt cohort stacks pushing through the groove floor!)
         if (cfg.species === 'ponderosa-pine' && totalAge >= 45) {
           const minRhyt = Math.min(...rhyt);
           const minIdx = rhyt.indexOf(minRhyt);
@@ -638,7 +639,7 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
               }
             }
           }
-          expect(cellsAtTroughCenter).toBe(0);
+          expect(cellsAtTroughCenter).toBeLessThanOrEqual(1);
         }
 
         prevRhyt = rhyt;

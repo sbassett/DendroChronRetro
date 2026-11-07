@@ -4,7 +4,6 @@ import {
   Copy,
   Check,
   MapPin,
-  Info,
   AlertTriangle,
   Fingerprint,
   Sliders,
@@ -13,6 +12,7 @@ import { MonochromeMapPicker } from './components/MonochromeMapPicker';
 import { SvgViewport } from './components/SvgViewport';
 import { RingChronologyChart } from './components/RingChronologyChart';
 import { simulateTreeCrossSection } from './model/growthEngine';
+import { generateEnvironmentalNarrative } from './model/narrative';
 import { LOCATION_PRESETS, SPECIES_PROFILES } from './model/species';
 import {
   generateCrossSectionSvgBundle,
@@ -30,7 +30,6 @@ import {
   formatDiameter,
   formatElevation,
   formatSlope,
-  formatStumpHeightLong,
   formatStumpHeightShort,
   formatTemperature,
   formatViabilityReason,
@@ -53,13 +52,13 @@ export const App: React.FC = () => {
   const currentCalendarYear = useMemo(() => new Date().getFullYear(), []);
 
   const [unitSystem, setUnitSystem] = useState<UnitSystem>('us');
-  const [species, setSpecies] = useState<SpeciesId>('douglas-fir');
-  const [latitude, setLatitude] = useState<number>(44.2124);
-  const [longitude, setLongitude] = useState<number>(-122.2557);
-  const [latInput, setLatInput] = useState<string>('44.21240');
-  const [lonInput, setLonInput] = useState<string>('-122.25570');
+  const [species, setSpecies] = useState<SpeciesId>('ponderosa-pine');
+  const [latitude, setLatitude] = useState<number>(35.2645);
+  const [longitude, setLongitude] = useState<number>(-111.7442);
+  const [latInput, setLatInput] = useState<string>('35.26450');
+  const [lonInput, setLonInput] = useState<string>('-111.74420');
 
-  const [totalAge, setTotalAge] = useState<number>(65);
+  const [totalAge, setTotalAge] = useState<number>(250);
   const [overrideDeathYear, setOverrideDeathYear] = useState<boolean>(false);
   const [customDeathYear, setCustomDeathYear] = useState<number>(currentCalendarYear);
 
@@ -236,6 +235,11 @@ export const App: React.FC = () => {
     [simulation, activeProfile, unitSystem]
   );
 
+  const envNarrative = useMemo(
+    () => (simulation ? generateEnvironmentalNarrative(simulation, unitSystem) : null),
+    [simulation, unitSystem]
+  );
+
   return (
     <div className="app-shell">
       {hoveredRing !== null && (
@@ -250,7 +254,7 @@ export const App: React.FC = () => {
 
       {/* Left Control Sidebar */}
       <aside className="sidebar">
-        <header className="brand-header">
+        <header className="brand-header desktop-brand-header">
           <div className="brand-top-row">
             <div className="brand-title">
               <img
@@ -286,7 +290,7 @@ export const App: React.FC = () => {
             </div>
           </div>
           <p className="brand-subtitle">
-            Deterministic Grayscale Stump Cross-Section &amp; Ring Simulator
+            Reconstruct a tree’s hidden climate diary from any coordinate in the American West.
           </p>
         </header>
 
@@ -381,11 +385,11 @@ export const App: React.FC = () => {
           </div>
         </section>
 
-        {/* 3. Tree Age & Death Year Override */}
-        <section className="control-section">
+        {/* 3. Tree Age & Cambium Year */}
+        <section className="control-section age-section">
           <div className="section-label-row">
             <label className="section-label" htmlFor="age-slider">
-              3. Total Biological Age
+              3. Tree Age: {totalAge} Years
             </label>
             <div className="age-number-wrap">
               <input
@@ -408,10 +412,19 @@ export const App: React.FC = () => {
             className="mono-slider"
             type="range"
             min={5}
-            max={300}
-            value={Math.min(300, totalAge)}
+            max={350}
+            value={Math.min(350, totalAge)}
             onChange={(e) => setTotalAge(Number(e.target.value))}
           />
+
+          {simulation && (
+            <div className="age-narrative-subtext">
+              Germinated {simulation.germinationYear} • First ring at{' '}
+              {formatStumpHeightShort(simulation.stumpHeightM, unitSystem)} cut plane:{' '}
+              {simulation.firstRingYear} ({simulation.visibleRingCount} visible rings) • Outer cambium:{' '}
+              {effectiveDeathYear}
+            </div>
+          )}
 
           <div className="death-year-row">
             <label className="checkbox-row">
@@ -420,12 +433,12 @@ export const App: React.FC = () => {
                 checked={overrideDeathYear}
                 onChange={(e) => setOverrideDeathYear(e.target.checked)}
               />
-              <span>Override death / felling year (default {currentCalendarYear})</span>
+              <span>Harvest / Cambium Year (Default: {currentCalendarYear})</span>
             </label>
 
             {overrideDeathYear && (
               <div className="death-year-input-wrap">
-                <label htmlFor="death-year-input">Death Year:</label>
+                <label htmlFor="death-year-input">Cambium Year:</label>
                 <input
                   id="death-year-input"
                   type="number"
@@ -447,27 +460,6 @@ export const App: React.FC = () => {
               </div>
             )}
           </div>
-
-          {simulation && (
-            <div className="stump-age-callout">
-              <Info size={14} className="callout-icon" />
-              <div>
-                <strong>
-                  {simulation.visibleRingCount} visible rings at{' '}
-                  {formatStumpHeightShort(simulation.stumpHeightM, unitSystem)}{' '}
-                  stump height
-                </strong>
-                <p>
-                  Germinated in <strong>{simulation.germinationYear}</strong>; took{' '}
-                  <strong>{simulation.yearsToStumpHeight} yrs</strong> as a seedling
-                  to reach the{' '}
-                  {formatStumpHeightLong(simulation.stumpHeightM, unitSystem)} cut
-                  plane (first ring: {simulation.firstRingYear}, outer cambium:{' '}
-                  {effectiveDeathYear}).
-                </p>
-              </div>
-            </div>
-          )}
         </section>
 
         {/* 4. SVG Display Options */}
@@ -544,6 +536,47 @@ export const App: React.FC = () => {
 
       {/* Main Specimen Stage */}
       <main className="main-stage">
+        {/* Mobile-only Top Brand Header */}
+        <header className="brand-header mobile-brand-header">
+          <div className="brand-top-row">
+            <div className="brand-title">
+              <img
+                src="./favicon.svg"
+                alt=""
+                width={24}
+                height={24}
+                className="brand-cookie-icon"
+              />
+              <h1>DendroSim</h1>
+            </div>
+            <div
+              className="unit-segmented"
+              role="group"
+              aria-label="Units of measure"
+            >
+              <button
+                type="button"
+                className={unitSystem === 'us' ? 'active' : ''}
+                title="US Customary units (in, ft, °F)"
+                onClick={() => setUnitSystem('us')}
+              >
+                US
+              </button>
+              <button
+                type="button"
+                className={unitSystem === 'metric' ? 'active' : ''}
+                title="Metric units (mm, cm, m, °C)"
+                onClick={() => setUnitSystem('metric')}
+              >
+                Metric
+              </button>
+            </div>
+          </div>
+          <p className="brand-subtitle">
+            Reconstruct a tree’s hidden climate diary from any coordinate in the American West.
+          </p>
+        </header>
+
         {/* Top Telemetry & Export Bar */}
         <header className="top-bar">
           <div className="telemetry-strip">
@@ -673,6 +706,19 @@ export const App: React.FC = () => {
           </div>
         </header>
 
+        {/* Environmental Summary Narrative Card */}
+        {simulation && envNarrative && (
+          <div className="environmental-story-card">
+            <div className="story-header-row">
+              <span className="story-tag">Site Climate Diary</span>
+              <span className="story-coords">
+                {latitude.toFixed(4)}°N, {Math.abs(longitude).toFixed(4)}°W
+              </span>
+            </div>
+            <p className="story-prose">{envNarrative.story}</p>
+          </div>
+        )}
+
         {/* Ecological Viability Banner if Marginal or Unsuitable */}
         {simulation &&
           (simulation.viability.stressLevel === 'unsuitable' ||
@@ -714,6 +760,8 @@ export const App: React.FC = () => {
             records={ringRecords}
             hoveredRing={hoveredRing}
             unitSystem={unitSystem}
+            latitude={latitude}
+            longitude={longitude}
             onHoverRing={setHoveredRing}
           />
         )}

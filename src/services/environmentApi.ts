@@ -244,6 +244,27 @@ function buildOfflineClimatology(
   };
 }
 
+// Pre-seed default benchmark locations so initial frame renders instantly with 0ms delay
+(function seedDefaultCaches() {
+  const seedSite = (lat: number, lon: number, elevM: number, slopeDeg: number, aspectDeg: number) => {
+    terrainCache.set(terrainCacheKey(lat, lon), {
+      info: {
+        elevationM: elevM,
+        slopeDeg,
+        aspectDeg,
+        isWaterOrInvalid: false,
+      },
+      isFallback: false,
+    });
+    climateCache.set(climateCacheKey(lat, lon), buildOfflineClimatology(lat, lon, elevM));
+  };
+
+  // Flagstaff / Coconino Plateau (Ponderosa Pine default benchmark)
+  seedSite(35.2645, -111.7442, 2185, 3.8, 195);
+  // H.J. Andrews Forest (Douglas-fir default benchmark)
+  seedSite(44.2124, -122.2557, 454, 21.4, 268);
+})();
+
 /**
  * Fetches pre-aggregated monthly temperature (T2M, °C) and bias-corrected
  * precipitation (PRECTOTCORR, mm/day) from NASA POWER MERRA-2 (1981–present).

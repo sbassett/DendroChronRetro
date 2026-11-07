@@ -690,17 +690,296 @@ body,
   color: var(--text-muted);
 }
 
+/* Top Brand Headers */
+.desktop-brand-header {
+  display: block;
+}
+
+.mobile-brand-header {
+  display: none;
+}
+
+/* Environmental Summary Story Card */
+.environmental-story-card {
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-light);
+  padding: 10px 18px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.story-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.story-tag {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.story-coords {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
+.story-prose {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* Tree Age Narrative */
+.age-section .section-label {
+  font-size: 0.78rem;
+}
+
+.age-narrative-subtext {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
+/* Chronology Landmark Signal Badges & Pins */
+.chronology-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.chronology-title {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.landmark-chips-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.landmark-label {
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.landmark-chip {
+  border: 1px solid var(--border-light);
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-size: 0.66rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.12s ease;
+}
+
+.landmark-chip:hover,
+.landmark-chip.active {
+  background: var(--accent-dark);
+  color: #ffffff;
+  border-color: var(--accent-dark);
+}
+
+.landmark-chip-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #1e1e1e;
+}
+
+.landmark-chip.active .landmark-chip-dot,
+.landmark-chip:hover .landmark-chip-dot {
+  background: #ffffff;
+}
+
+.chronology-landmark-banner {
+  background: rgba(22, 22, 22, 0.94);
+  color: #f6f6f2;
+  padding: 6px 12px;
+  border-radius: 5px;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  margin-top: 2px;
+}
+
+.chronology-landmark-banner strong {
+  color: #ffffff;
+}
+
+.chronology-landmark-banner span {
+  color: #d8d8d2;
+}
+
+.chrono-bar-col {
+  position: relative;
+}
+
+.landmark-pin {
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.pin-flag {
+  font-size: 0.54rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: #1a1a1a;
+  white-space: nowrap;
+  letter-spacing: -0.02em;
+}
+
+.pin-stem {
+  width: 1px;
+  height: 3px;
+  background: #1a1a1a;
+}
+
+.chrono-bar.landmark-bar {
+  background: #141414;
+}
+
+/* Responsive Media Queries */
 @media (max-width: 920px) {
+  .desktop-brand-header {
+    display: none;
+  }
+
+  .mobile-brand-header {
+    display: block;
+    padding: 12px 14px 10px;
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border-light);
+  }
+
   .app-shell {
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  /* Invert Hierarchy: Main Stage (Tree Hero) First, Controls Second */
+  .main-stage {
+    order: 1;
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    min-height: unset;
+    flex: none;
+    overflow: visible;
+  }
+
+  /* Canvas Area: Hero Element #1 on Mobile */
+  .canvas-area {
+    order: 2;
+    height: 52vh;
+    min-height: 320px;
+    max-height: 480px;
+    width: 100%;
+    position: relative;
+    border-bottom: 1px solid var(--border-light);
+  }
+
+  /* Interactive Ring Chronology Chart immediately beneath hero disc */
+  .chronology-panel {
+    order: 3;
+    border-top: none;
+    border-bottom: 1px solid var(--border-light);
+    padding: 8px 12px 10px;
+  }
+
+  /* Environmental Summary Card */
+  .environmental-story-card {
+    order: 4;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border-light);
+  }
+
+  /* Top Bar (Telemetry & Export) */
+  .top-bar {
+    order: 5;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px 14px;
+  }
+
+  .telemetry-strip {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .export-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  /* Viability Banner */
+  .viability-banner {
+    order: 6;
+  }
+
+  /* Control Sidebar: Reactive controls beneath hero artifact */
+  .sidebar {
+    order: 2;
+    border-right: none;
+    border-top: 2px solid var(--border-strong);
+    padding: 16px 14px 40px;
     height: auto;
     overflow: visible;
   }
-  .sidebar {
-    border-right: none;
-    border-bottom: 1px solid var(--border-light);
+
+  .preset-chips {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 6px;
+    -webkit-overflow-scrolling: touch;
   }
-  .main-stage {
-    height: 82vh;
+
+  .preset-chip {
+    flex-shrink: 0;
+  }
+
+  .coord-inputs-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ring-inspector-badge {
+    top: 8px;
+    right: 8px;
+    padding: 6px 10px;
+    font-size: 0.68rem;
   }
 }

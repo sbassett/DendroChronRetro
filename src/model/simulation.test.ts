@@ -5,6 +5,10 @@ import {
 } from '../services/environmentApi';
 import { simulateTreeCrossSection } from './growthEngine';
 import {
+  generateEnvironmentalNarrative,
+  getRelevantClimateLandmarks,
+} from './narrative';
+import {
   isWithinSpeciesNativeRange,
   projectToLocatorMap,
 } from './locatorMapData';
@@ -753,5 +757,57 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
     expect(phloemRaysIdx).toBeGreaterThan(innerPhloemIdx);
     expect(ringsIdx).toBeGreaterThan(phloemRaysIdx);
     expect(cambiumIdx).toBeGreaterThan(ringsIdx);
+  });
+
+  it('generates rich environmental storytelling narratives and flags landmark regional climate signals', () => {
+    const envCascades = makeMockEnvironment(9.5, 950, 18, 90); // 18 deg eastern slope, 950mm precip
+    const simCascades = simulateTreeCrossSection(
+      {
+        species: 'douglas-fir',
+        latitude: 44.2124,
+        longitude: -122.2557,
+        totalAge: 80,
+        deathYear: 2026,
+      },
+      envCascades
+    );
+
+    const narrativeCascades = generateEnvironmentalNarrative(simCascades, 'us');
+    expect(narrativeCascades.story).toContain('Oregon Cascades');
+    expect(narrativeCascades.story).toContain('slope');
+    expect(narrativeCascades.story).toContain('yielding lush earlywood growth');
+
+    // Coconino Plateau Flagstaff narrative
+    const envFlagstaff = makeMockEnvironment(8.2, 480, 3.5, 180);
+    const simFlagstaff = simulateTreeCrossSection(
+      {
+        species: 'ponderosa-pine',
+        latitude: 35.2645,
+        longitude: -111.7442,
+        totalAge: 250,
+        deathYear: 2026,
+      },
+      envFlagstaff
+    );
+    const narrativeFlagstaff = generateEnvironmentalNarrative(simFlagstaff, 'us');
+    expect(narrativeFlagstaff.story).toContain('Coconino Plateau');
+    expect(narrativeFlagstaff.story).toContain('climate-sensitive');
+    expect(narrativeFlagstaff.story).toContain('regional droughts');
+
+    // Climate Landmarks: Flagstaff (1776–2026) must include 2002 Southwest Megadrought & 1956 drought
+    const landmarksSW = getRelevantClimateLandmarks(1776, 2026, 35.2645, -111.7442);
+    const yearsSW = landmarksSW.map((lm) => lm.year);
+    expect(yearsSW).toContain(2002);
+    expect(yearsSW).toContain(1956);
+    expect(yearsSW).toContain(1934);
+
+    // Cascades (1963–2026) must include 1977 West Coast Drought and 2015 Snow Drought
+    const landmarksNW = getRelevantClimateLandmarks(1963, 2026, 44.2124, -122.2557);
+    const yearsNW = landmarksNW.map((lm) => lm.year);
+    expect(yearsNW).toContain(1977);
+    expect(yearsNW).toContain(2015);
+    expect(yearsNW).toContain(2021);
+    // Southwest-only 2002 megadrought should not be flagged for mesic Oregon Cascades
+    expect(yearsNW).not.toContain(2002);
   });
 });

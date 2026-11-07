@@ -7,6 +7,8 @@ import {
   AlertTriangle,
   Fingerprint,
   Sliders,
+  Monitor,
+  X,
 } from 'lucide-react';
 import { MonochromeMapPicker } from './components/MonochromeMapPicker';
 import { SvgViewport } from './components/SvgViewport';
@@ -83,6 +85,22 @@ export const App: React.FC = () => {
   const [loadingEnv, setLoadingEnv] = useState<boolean>(true);
   const [hoveredRing, setHoveredRing] = useState<number | null>(null);
   const [copiedSvg, setCopiedSvg] = useState<boolean>(false);
+  const [showDeviceNotice, setShowDeviceNotice] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('dendro_dismiss_device_notice') !== '1';
+    } catch {
+      return true;
+    }
+  });
+
+  const handleDismissDeviceNotice = useCallback(() => {
+    setShowDeviceNotice(false);
+    try {
+      sessionStorage.setItem('dendro_dismiss_device_notice', '1');
+    } catch {
+      // Ignore storage errors in restricted contexts
+    }
+  }, []);
 
   const startYear = effectiveDeathYear - Math.max(4, totalAge);
   const currentEnvKey = `${latitude.toFixed(4)}:${longitude.toFixed(4)}:${startYear}:${effectiveDeathYear}`;
@@ -538,6 +556,35 @@ export const App: React.FC = () => {
 
       {/* Main Specimen Stage */}
       <main className="main-stage">
+        {/* Mobile / Narrow Viewport Device Recommendation Notice */}
+        {showDeviceNotice && (
+          <aside
+            className="device-experience-banner"
+            role="status"
+            aria-label="Device recommendation notice"
+          >
+            <div className="device-experience-content">
+              <Monitor
+                className="device-experience-icon"
+                size={15}
+                aria-hidden="true"
+              />
+              <span className="device-experience-text">
+                For the fullest experience, we recommend visiting on a desktop or tablet.
+              </span>
+            </div>
+            <button
+              type="button"
+              className="device-experience-close"
+              onClick={handleDismissDeviceNotice}
+              aria-label="Dismiss recommendation notice"
+              title="Dismiss notice"
+            >
+              <X size={14} aria-hidden="true" />
+            </button>
+          </aside>
+        )}
+
         {/* Mobile-only Top Brand Header */}
         <header className="brand-header mobile-brand-header">
           <div className="brand-top-row">

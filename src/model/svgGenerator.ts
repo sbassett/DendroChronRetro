@@ -469,19 +469,17 @@ export function generateCrossSectionSvgBundle(
     );
     const px = projPin.inFrame ? projPin.x : projPin.clampedX;
     const py = projPin.inFrame ? projPin.y : projPin.clampedY;
-    const lakeFill = options.transparentBackground ? '#ffffff' : '#f6f6f4';
-    const lakeOpacity = options.transparentBackground ? '0.82' : '1';
-    const haloHex = options.transparentBackground ? '#ffffff' : '#f6f6f4';
+    const lakeFill = options.transparentBackground ? '#ededeb' : '#f6f6f4';
 
     const pinMarkup = projPin.inFrame
-      ? `<circle id="locator-cookie-pin" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="15.5" fill="#0d0d0d" stroke="${haloHex}" stroke-width="7"/>`
+      ? `<circle id="locator-cookie-pin" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="15.5" fill="#0a0a0a" stroke="#ffffff" stroke-width="7.5"/>`
       : `<circle id="locator-cookie-pin" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="15" fill="none" stroke="#1c1c1c" stroke-width="5" stroke-dasharray="8 6"/>`;
 
     elements.push(
       `<g id="locator-map" pointer-events="none" transform="translate(${locX.toFixed(2)} ${locY.toFixed(2)}) scale(${mapScale.toFixed(5)})">` +
-        `<path d="${NA_LAND_PATH}" fill="#ebebe7" fill-opacity="0.72" stroke="#9b9b94" stroke-width="2.2" stroke-linejoin="round"/>` +
-        `<path d="${NA_GREAT_LAKES_PATH}" fill="${lakeFill}" fill-opacity="${lakeOpacity}" stroke="#9b9b94" stroke-width="1.8" stroke-linejoin="round"/>` +
-        `<path data-species-range="${sim.params.species}" fill-rule="evenodd" d="${SPECIES_NATIVE_RANGE_PATH[sim.params.species]}" fill="#494945" fill-opacity="0.58"/>` +
+        `<path d="${NA_LAND_PATH}" fill="#ffffff" stroke="#8f8f88" stroke-width="2.2" stroke-linejoin="round"/>` +
+        `<path d="${NA_GREAT_LAKES_PATH}" fill="${lakeFill}" stroke="#8f8f88" stroke-width="1.8" stroke-linejoin="round"/>` +
+        `<path data-species-range="${sim.params.species}" fill-rule="evenodd" d="${SPECIES_NATIVE_RANGE_PATH[sim.params.species]}" fill="#42423e" fill-opacity="0.68"/>` +
         pinMarkup +
         `</g>`
     );

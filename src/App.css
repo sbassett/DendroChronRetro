@@ -575,7 +575,7 @@ body,
 .ring-inspector-badge {
   position: absolute;
   top: 14px;
-  left: 16px;
+  right: 16px;
   background: rgba(22, 22, 22, 0.93);
   color: #f8f8f6;
   padding: 8px 12px;

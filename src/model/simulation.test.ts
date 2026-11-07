@@ -4,6 +4,10 @@ import {
   loadEnvironmentDataset,
 } from '../services/environmentApi';
 import { simulateTreeCrossSection } from './growthEngine';
+import {
+  isWithinSpeciesNativeRange,
+  projectToLocatorMap,
+} from './locatorMapData';
 import { generateCrossSectionSvg } from './svgGenerator';
 import { EnvironmentDataset, MonthlyClimateYear } from './types';
 import {
@@ -289,5 +293,52 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
     expect(fallbackDs.source).toBe('offline-climatology');
     expect(fallbackDs.years.length).toBe(2026 - 1979 + 1);
     expect(fallbackDs.terrain.elevationM).toBeGreaterThan(50);
+  });
+
+  it('renders top-left North America species range locator map and classifies native range accurately', () => {
+    // H.J. Andrews, OR is inside Douglas-fir native range
+    expect(isWithinSpeciesNativeRange('douglas-fir', 44.2124, -122.2557)).toBe(true);
+    // Flagstaff, AZ & Black Hills, SD are inside Ponderosa pine native range
+    expect(isWithinSpeciesNativeRange('ponderosa-pine', 35.2645, -111.7442)).toBe(true);
+    expect(isWithinSpeciesNativeRange('ponderosa-pine', 43.8791, -103.4591)).toBe(true);
+    // New York City is in the North America frame, but outside both western conifer ranges
+    const nyProj = projectToLocatorMap(40.7128, -74.006);
+    expect(nyProj.inFrame).toBe(true);
+    expect(isWithinSpeciesNativeRange('douglas-fir', 40.7128, -74.006)).toBe(false);
+    expect(isWithinSpeciesNativeRange('ponderosa-pine', 40.7128, -74.006)).toBe(false);
+
+    const env = makeMockEnvironment();
+    const sim = simulateTreeCrossSection(
+      {
+        species: 'douglas-fir',
+        latitude: 44.2124,
+        longitude: -122.2557,
+        totalAge: 65,
+        deathYear: 2026,
+      },
+      env
+    );
+
+    const svgWithMap = generateCrossSectionSvg(sim, {
+      showBark: true,
+      showMedullaryRays: true,
+      showAnnotations: true,
+      showLocatorMap: true,
+      transparentBackground: false,
+    });
+    expect(svgWithMap).toContain('id="locator-map"');
+    expect(svgWithMap).toContain('data-species-range="douglas-fir"');
+    expect(svgWithMap).toContain('id="locator-cookie-pin"');
+    expect(svgWithMap).toContain('N. AMERICA');
+    expect(svgWithMap).toContain('In range');
+
+    const svgWithoutMap = generateCrossSectionSvg(sim, {
+      showBark: true,
+      showMedullaryRays: true,
+      showAnnotations: true,
+      showLocatorMap: false,
+      transparentBackground: false,
+    });
+    expect(svgWithoutMap).not.toContain('id="locator-map"');
   });
 });

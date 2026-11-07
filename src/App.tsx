@@ -74,6 +74,7 @@ export const App: React.FC = () => {
     showBark: true,
     showMedullaryRays: true,
     showAnnotations: true,
+    showLocatorMap: true,
     transparentBackground: false,
   });
 
@@ -487,6 +488,19 @@ export const App: React.FC = () => {
             <label className="checkbox-row">
               <input
                 type="checkbox"
+                checked={renderOptions.showLocatorMap ?? true}
+                onChange={(e) =>
+                  setRenderOptions((o) => ({
+                    ...o,
+                    showLocatorMap: e.target.checked,
+                  }))
+                }
+              />
+              <span>Locator map</span>
+            </label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
                 checked={renderOptions.transparentBackground}
                 onChange={(e) =>
                   setRenderOptions((o) => ({
@@ -618,7 +632,7 @@ export const App: React.FC = () => {
             <SvgViewport
               innerMarkup={svgBundle.innerMarkup}
               baseViewBox={svgBundle.viewBox}
-              specimenResetKey={`${simulation.seedKey}:${totalAge}:${effectiveDeathYear}`}
+              specimenResetKey={`${simulation.seedKey}:${totalAge}:${effectiveDeathYear}:${(renderOptions.showLocatorMap ?? true) ? 1 : 0}`}
               ringsByIndex={ringsByIndex}
               hoveredRing={hoveredRing}
               unitSystem={unitSystem}

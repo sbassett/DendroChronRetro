@@ -3,7 +3,6 @@ import {
   Download,
   Copy,
   Check,
-  TreePine,
   MapPin,
   Info,
   AlertTriangle,
@@ -254,7 +253,13 @@ export const App: React.FC = () => {
         <header className="brand-header">
           <div className="brand-top-row">
             <div className="brand-title">
-              <TreePine size={20} strokeWidth={2.2} />
+              <img
+                src="./favicon.svg"
+                alt=""
+                width={24}
+                height={24}
+                className="brand-cookie-icon"
+              />
               <h1>DendroSim</h1>
             </div>
             <div

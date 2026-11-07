@@ -642,7 +642,8 @@ export function simulateTreeCrossSection(
     finalWoodRadii,
     anglesRad,
     meanFinalWoodRadiusMm,
-    rngBark
+    rngBark,
+    polarRings
   );
 
   // Compute physical diameters across horizontal + perpendicular axes

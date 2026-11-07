@@ -458,4 +458,87 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
       }
     }
   });
+
+  it('persists primary bark grooves at fixed compass angles and evolves secondary splits monotonically across age', () => {
+    const env = makeMockEnvironment(9.2, 620, 12, 190);
+
+    const findGrooveAngles = (
+      barkAngles: number[],
+      rhytThick: number[],
+      prominenceFrac = 0.22
+    ): number[] => {
+      const n = rhytThick.length;
+      const maxT = Math.max(...rhytThick);
+      const minWin = 14; // ~4.7 deg local minimum uniqueness
+      const promWin = 36; // ~12 deg reach onto flanking plate crests
+      const troughs: number[] = [];
+
+      for (let i = 0; i < n; i++) {
+        const cur = rhytThick[i];
+        let isLocalMin = true;
+        for (let d = -minWin; d <= minWin; d++) {
+          if (rhytThick[(i + d + n) % n] < cur) {
+            isLocalMin = false;
+            break;
+          }
+        }
+        if (!isLocalMin) continue;
+
+        let localMax = cur;
+        for (let d = -promWin; d <= promWin; d++) {
+          const v = rhytThick[(i + d + n) % n];
+          if (v > localMax) localMax = v;
+        }
+        if (localMax - cur >= maxT * prominenceFrac) {
+          if (
+            troughs.length === 0 ||
+            Math.abs(barkAngles[i] - troughs[troughs.length - 1]) > 0.08
+          ) {
+            troughs.push(barkAngles[i]);
+          }
+        }
+      }
+      return troughs;
+    };
+
+    const ages = [28, 55, 95, 160, 260];
+    const grooveSets: number[][] = [];
+
+    for (const totalAge of ages) {
+      const sim = simulateTreeCrossSection(
+        {
+          species: 'ponderosa-pine',
+          latitude: 44.4622,
+          longitude: -121.6358,
+          totalAge,
+          deathYear: 2026,
+        },
+        env
+      );
+      const rhyt = sim.bark.outerBarkRadiusMm.map(
+        (r, i) => r - sim.bark.phloemOuterRadiusMm[i]
+      );
+      grooveSets.push(findGrooveAngles(sim.bark.barkAnglesRad, rhyt));
+    }
+
+    const juvenileGrooves = grooveSets[0];
+    expect(juvenileGrooves.length).toBeGreaterThanOrEqual(8);
+
+    // Every juvenile primary groove must persist at the same compass angle (+/- 3.5 deg) at all older ages
+    for (let s = 1; s < grooveSets.length; s++) {
+      const matureGrooves = grooveSets[s];
+      expect(matureGrooves.length).toBeGreaterThanOrEqual(
+        juvenileGrooves.length
+      );
+      for (const g0 of juvenileGrooves) {
+        const minAngularDist = Math.min(
+          ...matureGrooves.map((gm) => {
+            const diff = Math.abs(gm - g0) % (2 * Math.PI);
+            return Math.min(diff, 2 * Math.PI - diff);
+          })
+        );
+        expect(minAngularDist).toBeLessThan(0.062); // < ~3.5 degrees across 230+ years of growth
+      }
+    }
+  });
 });

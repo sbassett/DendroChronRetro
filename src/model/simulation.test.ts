@@ -408,4 +408,54 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
       }
     }
   });
+
+  it('scales internal rhytidome bark plates and cork tiers to the full exterior bark thickness across all ages', () => {
+    const mesicEnv = makeMockEnvironment(10.5, 1450, 10, 180);
+
+    for (const species of ['ponderosa-pine', 'douglas-fir'] as const) {
+      for (const totalAge of [20, 50, 85, 160, 320]) {
+        const sim = simulateTreeCrossSection(
+          {
+            species,
+            latitude: 44.2124,
+            longitude: -122.2557,
+            totalAge,
+            deathYear: 2026,
+          },
+          mesicEnv
+        );
+
+        const { barkAnglesRad, phloemOuterRadiusMm, outerBarkRadiusMm, rhytidomeCells } =
+          sim.bark;
+
+        let maxRhytidomeThickMm = 0;
+        for (let i = 0; i < barkAnglesRad.length; i++) {
+          const rhyt = outerBarkRadiusMm[i] - phloemOuterRadiusMm[i];
+          if (rhyt > maxRhytidomeThickMm) {
+            maxRhytidomeThickMm = rhyt;
+          }
+        }
+
+        let maxCellRadialOffsetMm = 0;
+        const twoPi = 2 * Math.PI;
+        for (const cell of rhytidomeCells) {
+          for (const pt of cell.pointsPolar) {
+            const normTheta = ((pt.theta % twoPi) + twoPi) % twoPi;
+            const idx = Math.floor(
+              (normTheta / twoPi) * barkAnglesRad.length
+            );
+            const offset = pt.r - phloemOuterRadiusMm[idx];
+            if (offset > maxCellRadialOffsetMm) {
+              maxCellRadialOffsetMm = offset;
+            }
+          }
+        }
+
+        // Internal bark plates/cork tiers must never stall behind the growing exterior bark contour
+        expect(maxCellRadialOffsetMm).toBeGreaterThanOrEqual(
+          maxRhytidomeThickMm
+        );
+      }
+    }
+  });
 });

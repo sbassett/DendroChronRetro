@@ -33,12 +33,20 @@ export function buildAnatomicalBarkGeometry(
     profile.bark.matureDbtRatio * maturityWeight;
 
   const stumpBarkBoost = 1.15;
-  const meanSingleBarkMm = clamp(
+  const rawSingleBarkMm =
     (0.5 * dbtRatio * diameterIbMm + profile.bark.juvenileOffsetMm) *
-      stumpBarkBoost *
-      rngBark.range(0.93, 1.08),
+    stumpBarkBoost *
+    rngBark.range(0.93, 1.08);
+  // Outer scale exfoliation gradually balances inner periderm production on old-growth trunks
+  const softMaxMm = morphology === 'plated-scaly' ? 82.0 : 104.0;
+  const kneeMm = morphology === 'plated-scaly' ? 44.0 : 62.0;
+  const spanMm = softMaxMm - kneeMm;
+  const meanSingleBarkMm = clamp(
+    rawSingleBarkMm <= kneeMm
+      ? rawSingleBarkMm
+      : kneeMm + spanMm * (1 - Math.exp(-(rawSingleBarkMm - kneeMm) / spanMm)),
     2.0,
-    96.0
+    softMaxMm
   );
 
   // Hoop-strain maturity [0.12 .. 1.0]: small saplings have shallow fissures; large trunks fracture deeply
@@ -256,6 +264,16 @@ export function buildAnatomicalBarkGeometry(
     outerBarkRadiusMm.push(rPhloem + localRhytidomeMm);
   }
 
+  // Measure actual peak rhytidome thickness around the circumference so internal
+  // cork bands / puzzle-scale tiers always span 100% of the bark out to the exterior surface
+  let maxActualRhytidomeMm = 1.2;
+  for (let i = 0; i < barkSteps; i++) {
+    const rhyt = outerBarkRadiusMm[i] - phloemOuterRadiusMm[i];
+    if (rhyt > maxActualRhytidomeMm) {
+      maxActualRhytidomeMm = rhyt;
+    }
+  }
+
   // Generate internal sequential periderm compartments (clipped to rhytidome in SVG!)
   const rhytidomeCells: BarkGeometry['rhytidomeCells'] = [];
   const peridermSeams: BarkGeometry['peridermSeams'] = [];
@@ -264,18 +282,20 @@ export function buildAnatomicalBarkGeometry(
   if (morphology === 'furrowed-corky') {
     // DOUGLAS-FIR: Tangential pale cork (phellem) bands/lenses interleaved with dark crushed phloem,
     // laid down along concentric cambial arcs so they get cleanly truncated by deep V-fissures!
-    const bandSpacingMm = clamp(1.35 + rhytidomeTargetMaxMm * 0.055, 1.3, 3.6);
+    const coverHeightMm = maxActualRhytidomeMm * 1.04 + 0.6;
+    const targetBandSpacingMm = clamp(1.35 + coverHeightMm * 0.046, 1.3, 6.2);
     const numRadialBands = clamp(
-      Math.round(rhytidomeTargetMaxMm / bandSpacingMm),
+      Math.round(coverHeightMm / targetBandSpacingMm),
       3,
-      16
+      24
     );
+    const bandSpacingMm = coverHeightMm / numRadialBands;
 
     for (let b = 0; b < numRadialBands; b++) {
-      const zCenter = (b + 0.55) / numRadialBands; // 0 = near inner bark, 1 = outer ridge tips
-      const radialOffsetMm = zCenter * rhytidomeTargetMaxMm * 1.04;
+      const zCenter = (b + 0.52) / numRadialBands; // 0 = near inner bark, 1 = outer ridge tips
+      const radialOffsetMm = zCenter * coverHeightMm;
       const corkBandHalfThickMm =
-        bandSpacingMm * rngBark.range(0.19, 0.34) * (1 - 0.15 * zCenter);
+        bandSpacingMm * rngBark.range(0.19, 0.34) * (1 - 0.14 * zCenter);
 
       // Divide circumference into 5..11 elongated tangential cork lenses per radial tier
       const lensesInTier = rngBark.int(5, 10);
@@ -318,21 +338,21 @@ export function buildAnatomicalBarkGeometry(
           const rMid = basePhloemR + radialOffsetMm + waveMm;
           const halfT = corkBandHalfThickMm * pinch;
           outerArc.push({ theta, r: rMid + halfT });
-          innerArc.push({ theta, r: Math.max(basePhloemR, rMid - halfT) });
+          innerArc.push({ theta, r: Math.max(basePhloemR * 0.995, rMid - halfT) });
         }
 
         rhytidomeCells.push({
           pointsPolar: [...outerArc, ...innerArc.reverse()],
           fillGray: corkGray,
           strokeGray: 24,
-          strokeWidthMm: clamp(bandSpacingMm * 0.09, 0.12, 0.32),
+          strokeWidthMm: clamp(bandSpacingMm * 0.085, 0.12, 0.42),
         });
       }
 
       // Continuous undulating dark phellogen seam between cork tiers
       const seamPts: PolarPoint[] = [];
       const seamSteps = 180;
-      const seamOffsetMm = (b + 0.08) * (rhytidomeTargetMaxMm / numRadialBands);
+      const seamOffsetMm = (b + 0.08) * bandSpacingMm;
       for (let sIdx = 0; sIdx <= seamSteps; sIdx++) {
         const theta = (sIdx / seamSteps) * 2 * Math.PI;
         const baseR = sampleWoodRadius(theta) + basePhloemMm;
@@ -345,18 +365,26 @@ export function buildAnatomicalBarkGeometry(
       peridermSeams.push({
         pointsPolar: seamPts,
         gray: 20,
-        widthMm: clamp(bandSpacingMm * 0.08, 0.11, 0.28),
+        widthMm: clamp(bandSpacingMm * 0.075, 0.11, 0.36),
       });
     }
   } else {
     // PONDEROSA PINE: Interlocking brick/shingle tiers of tabular-lenticular puzzle scales
-    // enclosed by crisp dark sequential periderm seams!
-    const scaleThickMm = clamp(1.15 + rhytidomeTargetMaxMm * 0.042, 1.1, 2.55);
-    const numTiers = clamp(
-      Math.round((rhytidomeTargetMaxMm * 1.06) / scaleThickMm),
-      4,
-      15
+    // enclosed by crisp dark sequential periderm seams spanning 100% of the rhytidome!
+    const coverHeightMm =
+      maxActualRhytidomeMm * 1.08 + basePhloemMm * 0.1 + 0.8;
+    const targetScaleThickMm = clamp(
+      1.15 + coverHeightMm * 0.048,
+      1.15,
+      5.6
     );
+    const numTiers = clamp(
+      Math.round(coverHeightMm / targetScaleThickMm),
+      4,
+      20
+    );
+    // Derive exact radial step from coverHeightMm / numTiers so tiers NEVER stop short of outer bark
+    const scaleThickMm = coverHeightMm / numTiers;
 
     const scalesPerCircle = Math.max(
       16,
@@ -374,27 +402,34 @@ export function buildAnatomicalBarkGeometry(
         (t % 2 === 1 ? Math.PI / scalesPerCircle : 0) +
         rngBark.range(-0.04, 0.04);
 
+      // Partition full 2*PI circle into seamless jittered scale spans so adjacent scales meet cleanly
+      const boundaryOffsets: number[] = [0];
+      for (let sc = 1; sc < scalesPerCircle; sc++) {
+        const jitter = rngBark.range(-0.18, 0.18) / scalesPerCircle;
+        boundaryOffsets.push((sc / scalesPerCircle + jitter) * 2 * Math.PI);
+      }
+      boundaryOffsets.push(2 * Math.PI);
+
       for (let sc = 0; sc < scalesPerCircle; sc++) {
-        const scStart =
-          tierAngleOffset +
-          (sc / scalesPerCircle) * 2 * Math.PI +
-          rngBark.range(-0.012, 0.012);
-        const scSpan =
-          ((2 * Math.PI) / scalesPerCircle) * rngBark.range(0.92, 1.06);
-        const steps = 9;
+        const scStart = tierAngleOffset + boundaryOffsets[sc];
+        const scSpan = boundaryOffsets[sc + 1] - boundaryOffsets[sc];
+        const steps = 10;
 
         const outerPts: PolarPoint[] = [];
         const innerPts: PolarPoint[] = [];
 
-        // Ponderosa scales brighten slightly toward the weathered outer armor plates
+        // Ponderosa scales brighten from inner bark toward ochre/buff ("yellowbelly") outer plates,
+        // with subtle tier-to-tier & scale-to-scale luminance contrast so stacked layers read clearly
+        const tierParityLift = (t % 2 === 1 ? 6 : -4);
         const scaleGray = Math.round(
           clamp(
             profile.palette.barkBaseGray +
-              12 +
-              tierFrac * 26 +
-              rngBark.range(-9, 10),
-            66,
-            132
+              24 +
+              tierFrac * 36 +
+              tierParityLift +
+              rngBark.range(-10, 11),
+            84,
+            158
           )
         );
 
@@ -403,50 +438,62 @@ export function buildAnatomicalBarkGeometry(
           const theta = scStart + u * scSpan;
           const baseR = sampleWoodRadius(theta) + basePhloemMm;
 
-          // Subtle convex arch per scale (scalloped sequential periderm geometry)
+          // Subtle convex arch per scale; adjacent radial tiers share boundary wave seed
+          // so tiers interlock tightly without leaving dark voids between layers
           const scallop = Math.sin(u * Math.PI);
-          const wave =
+          const waveIn =
             scaleThickMm *
-            0.16 *
-            internalNoise.polarFbm(theta, 10.0, t * 1.4, 2);
+            0.14 *
+            internalNoise.polarFbm(theta, 10.0, t * 1.35, 2);
+          const waveOut =
+            scaleThickMm *
+            0.14 *
+            internalNoise.polarFbm(theta, 10.0, (t + 1) * 1.35, 2);
 
           const rIn =
-            baseR + rTierInnerOffset + wave - scaleThickMm * 0.12 * scallop;
+            t === 0
+              ? baseR - basePhloemMm * 0.08
+              : baseR + rTierInnerOffset + waveIn - scaleThickMm * 0.09 * scallop;
           const rOut =
-            baseR + rTierOuterOffset + wave + scaleThickMm * 0.1 * scallop;
+            baseR + rTierOuterOffset + waveOut + scaleThickMm * 0.11 * scallop;
 
-          innerPts.push({ theta, r: Math.max(baseR, rIn) });
+          innerPts.push({ theta, r: rIn });
           outerPts.push({ theta, r: rOut });
+        }
 
-          // Optional ultra-fine internal laminar exfoliation line inside thicker scales
-          if (k === steps && scaleThickMm > 1.35) {
-            const lamPts: PolarPoint[] = [];
-            for (let m = 0; m <= 6; m++) {
-              const um = m / 6;
-              const thM = scStart + um * scSpan;
-              const bRM = sampleWoodRadius(thM) + basePhloemMm;
-              const wM =
-                scaleThickMm *
-                0.16 *
-                internalNoise.polarFbm(thM, 10.0, t * 1.4, 2);
-              lamPts.push({
-                theta: thM,
-                r: bRM + 0.5 * (rTierInnerOffset + rTierOuterOffset) + wM,
-              });
-            }
-            peridermSeams.push({
-              pointsPolar: lamPts,
-              gray: clamp(scaleGray - 24, 34, 95),
-              widthMm: clamp(scaleThickMm * 0.065, 0.08, 0.18),
+        // Delicate internal papery laminar exfoliation line inside thicker scales (subtle when zoomed out)
+        if (scaleThickMm > 1.45) {
+          const lamPts: PolarPoint[] = [];
+          for (let m = 0; m <= 6; m++) {
+            const um = m / 6;
+            const thM = scStart + um * scSpan;
+            const bRM = sampleWoodRadius(thM) + basePhloemMm;
+            const wInM =
+              scaleThickMm *
+              0.14 *
+              internalNoise.polarFbm(thM, 10.0, t * 1.35, 2);
+            const wOutM =
+              scaleThickMm *
+              0.14 *
+              internalNoise.polarFbm(thM, 10.0, (t + 1) * 1.35, 2);
+            const wM = 0.5 * (wInM + wOutM);
+            lamPts.push({
+              theta: thM,
+              r: bRM + 0.5 * (rTierInnerOffset + rTierOuterOffset) + wM,
             });
           }
+          peridermSeams.push({
+            pointsPolar: lamPts,
+            gray: clamp(scaleGray - 18, 54, 122),
+            widthMm: clamp(scaleThickMm * 0.045, 0.07, 0.18),
+          });
         }
 
         rhytidomeCells.push({
           pointsPolar: [...outerPts, ...innerPts.reverse()],
           fillGray: scaleGray,
           strokeGray: profile.palette.barkFissureGray,
-          strokeWidthMm: clamp(scaleThickMm * 0.13, 0.13, 0.34),
+          strokeWidthMm: clamp(scaleThickMm * 0.125, 0.14, 0.52),
         });
       }
     }

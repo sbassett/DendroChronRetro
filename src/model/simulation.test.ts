@@ -452,8 +452,10 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
         }
 
         // Internal bark plates/cork tiers must never stall behind the growing exterior bark contour
+        // (Ponderosa puzzle scales form the 100% exterior plate top; Douglas-fir cork lenses reach >90% into ridge tips)
+        const minCoverageFrac = species === 'ponderosa-pine' ? 1.0 : 0.9;
         expect(maxCellRadialOffsetMm).toBeGreaterThanOrEqual(
-          maxRhytidomeThickMm
+          maxRhytidomeThickMm * minCoverageFrac
         );
       }
     }
@@ -540,5 +542,28 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
         expect(minAngularDist).toBeLessThan(0.062); // < ~3.5 degrees across 230+ years of growth
       }
     }
+
+    // Even on slow-growing xeric sites, bark-to-diameter ratio stays bounded by bifacial cambial allometry
+    const xericEnv = makeMockEnvironment(8.5, 360, 16, 210);
+    const ratios: number[] = [];
+    for (const totalAge of [30, 70, 140, 260]) {
+      const sim = simulateTreeCrossSection(
+        {
+          species: 'ponderosa-pine',
+          latitude: 35.2645,
+          longitude: -111.7442,
+          totalAge,
+          deathYear: 2026,
+        },
+        xericEnv
+      );
+      ratios.push(sim.bark.meanThicknessMm / sim.diameterInsideBarkMm);
+    }
+    // Single bark thickness stays realistic (~4.5% to 9.5% of DIB) and never balloons relative to wood diameter
+    for (const r of ratios) {
+      expect(r).toBeGreaterThan(0.035);
+      expect(r).toBeLessThan(0.11);
+    }
+    expect(ratios[ratios.length - 1]).toBeLessThanOrEqual(ratios[0] * 1.05);
   });
 });

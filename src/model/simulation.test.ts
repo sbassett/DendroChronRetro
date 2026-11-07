@@ -566,4 +566,59 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
     }
     expect(ratios[ratios.length - 1]).toBeLessThanOrEqual(ratios[0] * 1.05);
   });
+
+  it('maintains C0 year-to-year continuity in ridge width (arc-seconds) and thickness across secondary cleavage initiation', () => {
+    const env = makeMockEnvironment(9.5, 680, 12, 195);
+
+    for (const cfg of [
+      { species: 'ponderosa-pine' as const, lat: 44.4622, lon: -121.6358 },
+      { species: 'douglas-fir' as const, lat: 47.8609, lon: -123.9348 },
+    ]) {
+      let prevRhyt: number[] | null = null;
+      let prevOuterArcSec = 0;
+
+      // Step 1 year at a time across the entire secondary cleavage wave (ages 36..72)
+      for (let totalAge = 36; totalAge <= 72; totalAge++) {
+        const sim = simulateTreeCrossSection(
+          {
+            species: cfg.species,
+            latitude: cfg.lat,
+            longitude: cfg.lon,
+            totalAge,
+            deathYear: 1900 + totalAge,
+          },
+          env
+        );
+
+        const rhyt = sim.bark.outerBarkRadiusMm.map(
+          (rOut, i) => rOut - sim.bark.phloemOuterRadiusMm[i]
+        );
+        const maxRhyt = Math.max(...rhyt);
+        const outerThreshold = 0.75 * maxRhyt;
+        const arcSecPerStep = (360 * 3600) / rhyt.length;
+        const outerArcSec =
+          rhyt.filter((h) => h >= outerThreshold).length * arcSecPerStep;
+
+        if (prevRhyt !== null) {
+          let maxSingleYearGainMm = -Infinity;
+          let maxSingleYearDropMm = Infinity;
+          for (let i = 0; i < rhyt.length; i++) {
+            const delta = rhyt[i] - prevRhyt[i];
+            if (delta > maxSingleYearGainMm) maxSingleYearGainMm = delta;
+            if (delta < maxSingleYearDropMm) maxSingleYearDropMm = delta;
+          }
+
+          // No bark angle may jump upward in thickness when a secondary fissure initiates
+          expect(maxSingleYearGainMm).toBeLessThan(2.5);
+          // Progressive inward cleavage prevents instantaneous full-depth chasm drops
+          expect(maxSingleYearDropMm).toBeGreaterThan(-12.0);
+          // Outer ridge angular occupancy (at >= 75% of max bark thickness) never jumps magically wider
+          expect(outerArcSec - prevOuterArcSec).toBeLessThan(10 * 3600);
+        }
+
+        prevRhyt = rhyt;
+        prevOuterArcSec = outerArcSec;
+      }
+    }
+  });
 });

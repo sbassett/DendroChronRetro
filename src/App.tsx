@@ -522,45 +522,85 @@ export const App: React.FC = () => {
           <div className="telemetry-strip">
             {simulation ? (
               <>
-                <div className="metric-pill">
-                  <span className="metric-label">Diameter (Outside Bark)</span>
+                <div
+                  className="metric-pill"
+                  title="Total stump diameter outside bark (DOB)"
+                >
+                  <span className="metric-label">Outer Diameter</span>
                   <span className="metric-value">
                     {formatDiameter(simulation.diameterOutsideBarkMm, unitSystem)}
                   </span>
                 </div>
-                <div className="metric-pill">
-                  <span className="metric-label">Wood DIB / Mean Bark</span>
+                <div
+                  className="metric-pill"
+                  title="Wood diameter inside bark (DIB)"
+                >
+                  <span className="metric-label">Wood Diameter</span>
                   <span className="metric-value">
-                    {formatDiameter(simulation.diameterInsideBarkMm, unitSystem)} /{' '}
+                    {formatDiameter(simulation.diameterInsideBarkMm, unitSystem)}
+                  </span>
+                </div>
+                <div
+                  className="metric-pill"
+                  title="Mean radial bark thickness"
+                >
+                  <span className="metric-label">Mean Bark</span>
+                  <span className="metric-value">
                     {formatBarkThickness(
                       simulation.bark.meanThicknessMm,
                       unitSystem
                     )}
                   </span>
                 </div>
-                <div className="metric-pill">
-                  <span className="metric-label">Terrain (Elev · Slope)</span>
+                <div
+                  className="metric-pill"
+                  title="Site elevation above sea level"
+                >
+                  <span className="metric-label">Elevation</span>
                   <span className="metric-value">
                     {formatElevation(
                       simulation.environment.terrain.elevationM,
                       unitSystem
-                    )}{' '}
-                    ·{' '}
+                    )}
+                  </span>
+                </div>
+                <div className="metric-pill" title="Local terrain slope">
+                  <span className="metric-label">Slope</span>
+                  <span className="metric-value">
                     {formatSlope(
                       simulation.environment.terrain.slopeDeg,
                       unitSystem
-                    )}{' '}
-                    {compassLabel(simulation.environment.terrain.aspectDeg)}
+                    )}
                   </span>
                 </div>
-                <div className="metric-pill">
-                  <span className="metric-label">Site Climate</span>
+                <div
+                  className="metric-pill"
+                  title="Downhill slope facing azimuth"
+                >
+                  <span className="metric-label">Aspect</span>
+                  <span className="metric-value">
+                    {compassLabel(simulation.environment.terrain.aspectDeg)} (
+                    {Math.round(simulation.environment.terrain.aspectDeg)}°)
+                  </span>
+                </div>
+                <div
+                  className="metric-pill"
+                  title="Site mean annual air temperature"
+                >
+                  <span className="metric-label">Mean Temp</span>
                   <span className="metric-value">
                     {formatTemperature(
                       simulation.environment.meanAnnualTempC,
                       unitSystem
-                    )}{' '}
-                    ·{' '}
+                    )}
+                  </span>
+                </div>
+                <div
+                  className="metric-pill"
+                  title="Site mean annual precipitation"
+                >
+                  <span className="metric-label">Annual Precip</span>
+                  <span className="metric-value">
                     {formatAnnualPrecip(
                       simulation.environment.meanAnnualPrecipMm,
                       unitSystem
@@ -572,7 +612,7 @@ export const App: React.FC = () => {
                   title={`Deterministic seed key: ${simulation.seedKey}`}
                 >
                   <span className="metric-label">
-                    <Fingerprint size={11} /> Location+Species Seed
+                    <Fingerprint size={11} /> Seed
                   </span>
                   <span className="metric-value mono">{simulation.seedHex}</span>
                 </div>

@@ -119,8 +119,8 @@ export function buildAnatomicalBarkGeometry(
   // ---------------------------------------------------------------------------
   // 1. Bifacial Cambial Bark Accretion History (Strictly Coupled to Wood Radius)
   // ---------------------------------------------------------------------------
-  const initialCortexRhytMm = morphology === 'plated-scaly' ? 1.35 : 1.05;
-  const bifacialRhytCoeff = morphology === 'plated-scaly' ? 0.172 : 0.196;
+  const initialCortexRhytMm = morphology === 'plated-scaly' ? 1.15 : 1.05;
+  const bifacialRhytCoeff = morphology === 'plated-scaly' ? 0.132 : 0.178;
 
   interface RingBarkState {
     bRhytMm: number;
@@ -218,12 +218,12 @@ export function buildAnatomicalBarkGeometry(
   const cohorts: RhytidomeCohort[] = [];
   let bCursor = 0;
   let cIdx = 0;
-  while (bCursor < totalProducedRhytidomeMm && cIdx < 160) {
+  while (bCursor < totalProducedRhytidomeMm && cIdx < 220) {
     const baseStep =
       morphology === 'plated-scaly'
-        ? clamp(1.35 + 0.044 * bCursor, 1.35, 4.8)
-        : clamp(1.4 + 0.048 * bCursor, 1.4, 5.6);
-    const dB = baseStep * rngCohortGrid.range(0.9, 1.1);
+        ? clamp(1.3 + 0.02 * bCursor, 1.3, 2.45)
+        : clamp(1.3 + 0.038 * bCursor, 1.3, 4.5);
+    const dB = baseStep * rngCohortGrid.range(0.92, 1.08);
     const bNext = bCursor + dB;
     const bMid = 0.5 * (bCursor + Math.min(bNext, totalProducedRhytidomeMm));
     const birth = interpolateBirthWoodRadii(bMid);
@@ -259,8 +259,8 @@ export function buildAnatomicalBarkGeometry(
   for (let p = 0; p < numPrimary; p++) {
     const nucR =
       morphology === 'plated-scaly'
-        ? rngPrimary.range(5.5, 13.5)
-        : rngPrimary.range(8.5, 19.5);
+        ? rngPrimary.range(7.5, 14.5)
+        : rngPrimary.range(8.5, 18.5);
     const leanSlope =
       morphology === 'plated-scaly'
         ? rngPrimary.range(-0.045, 0.045)
@@ -428,11 +428,11 @@ export function buildAnatomicalBarkGeometry(
   // ---------------------------------------------------------------------------
   const saplingEpidermisShedMm =
     morphology === 'plated-scaly'
-      ? 2.6 * smoothstep(28, 75, meanWoodRadiusMm)
+      ? 2.2 * smoothstep(26, 68, meanWoodRadiusMm)
       : 1.4 * smoothstep(35, 90, meanWoodRadiusMm);
 
-  const onsetMm = morphology === 'plated-scaly' ? 40.0 : 58.0;
-  const maxRetainedMm = morphology === 'plated-scaly' ? 68.0 : 94.0;
+  const onsetMm = morphology === 'plated-scaly' ? 17.5 : 44.0;
+  const maxRetainedMm = morphology === 'plated-scaly' ? 42.0 : 80.0;
   const spanMm = maxRetainedMm - onsetMm;
   const retainedAfterWeatherMm =
     totalProducedRhytidomeMm <= onsetMm
@@ -451,7 +451,7 @@ export function buildAnatomicalBarkGeometry(
 
   // Precompute continuous basal-root incision progress p in [0, 1] for every active fissure
   // (secondary fissures only indent the basal groove floor after propagating down through the plate)
-  const crackPropRate = morphology === 'plated-scaly' ? 2.6 : 2.3;
+  const crackPropRate = morphology === 'plated-scaly' ? 2.4 : 2.2;
   const inciseScaleMm = morphology === 'plated-scaly' ? 11.5 : 10.5;
   const fissureThetas = new Float64Array(activeFissures.length);
   const fissureProgress = new Float64Array(activeFissures.length);
@@ -481,6 +481,7 @@ export function buildAnatomicalBarkGeometry(
   const barkAnglesRad: number[] = [];
   const phloemOuterRadiusMm: number[] = [];
   const outerBarkRadiusMm: number[] = [];
+  const grooveSealGrid = new Float64Array(barkSteps);
 
   const cohortZ: Float64Array[] = Array.from(
     { length: numActive + 1 },
@@ -490,17 +491,20 @@ export function buildAnatomicalBarkGeometry(
   // Reusable zero-allocation scratch buffers for multi-stage cohort kinematics (<= 6 stages)
   const stageStartCohortR = new Float64Array(8);
   const stageEndCohortR = new Float64Array(8);
+  const stageCleavedGrowthR = new Float64Array(8);
   const edgePosL = new Float64Array(8);
   const edgeGapL = new Float64Array(8);
   const edgePosR = new Float64Array(8);
   const edgeGapR = new Float64Array(8);
   const radialGrowthFactor = 1.013 + bifacialRhytCoeff * barkVigorMult;
-  const pullScale = morphology === 'plated-scaly' ? 1.04 : 1.18;
+  const pullScale = morphology === 'plated-scaly' ? 1.0 : 1.14;
+  // Resinous dark wound-periderm apex half-width at established fissures (0 mm at initiation -> C0 exact!)
+  const woundApexHalfWidthMm = morphology === 'plated-scaly' ? 0.85 : 0.95;
 
   // Exact C0-continuous kinematic evolution of a cohort's lateral presence on a plate:
-  // Tracks every ancestor stage's carried-over beveled flanks alongside newly cleaved faces
-  // (which nucleate at the outer surface and propagate inward, initiating at each cohort depth
-  // with zero gap and zero bevel so secondary cleavage causes ZERO jump in ridge width or depth).
+  // Every cohort splits directly at active fissure roots (zero conveyor-belt floor in grooves!)
+  // and rides outward stably on its plate. Newly cleaved faces initiate with zero gap and zero
+  // bevel at each cohort depth so secondary cleavage causes ZERO jump in ridge width or depth.
   const computeCohortPresence = (
     ancestry: PlateHistoryStage[],
     rBirthLocal: number,
@@ -524,12 +528,17 @@ export function buildAnatomicalBarkGeometry(
         0,
         dRSinceSplit - dRNeededToReachCohort
       );
+      stageCleavedGrowthR[k + 1] = dRSinceCohortCleaved;
       stageEndCohortR[k] = Math.min(
         stageEndCohortR[k + 1],
         rCurrentCohort - radialGrowthFactor * dRSinceCohortCleaved
       );
     }
     stageStartCohortR[0] = ancestry[0].rStartPhloemMm;
+    stageCleavedGrowthR[0] = Math.max(
+      0,
+      rCurrentCohort - ancestry[0].rStartPhloemMm
+    );
     for (let k = 1; k <= m; k++) {
       stageStartCohortR[k] = stageEndCohortR[k - 1];
     }
@@ -537,35 +546,53 @@ export function buildAnatomicalBarkGeometry(
     let nEdgesL = 0;
     let nEdgesR = 0;
     let initialized = false;
+    const rSafe = Math.max(12.0, rCurrentCohort);
 
     for (let stIdx = 0; stIdx <= m; stIdx++) {
       const st = ancestry[stIdx];
       const stEndR = stageEndCohortR[stIdx];
+      const pStage = clamp(
+        1 - Math.exp(-stageCleavedGrowthR[stIdx] / inciseScaleMm),
+        0,
+        1
+      );
+      const apexRad = (pStage * woundApexHalfWidthMm) / rSafe;
 
       if (initialized) {
         const prevSt = ancestry[stIdx - 1];
         if (st.thetaL > prevSt.thetaL + 1e-9) {
-          edgePosL[nEdgesL] = st.thetaL;
-          edgeGapL[nEdgesL] = 0;
+          edgePosL[nEdgesL] = st.thetaL + apexRad;
+          edgeGapL[nEdgesL] = apexRad;
           nEdgesL++;
         }
         if (st.thetaR < prevSt.thetaR - 1e-9) {
-          edgePosR[nEdgesR] = st.thetaR;
-          edgeGapR[nEdgesR] = 0;
+          edgePosR[nEdgesR] = st.thetaR - apexRad;
+          edgeGapR[nEdgesR] = apexRad;
           nEdgesR++;
         }
       }
 
-      if (rBirthLocal >= stEndR) {
+      if (rBirthLocal >= stEndR && stIdx < m) {
         continue;
       }
 
       if (!initialized) {
-        edgePosL[0] = st.thetaL;
-        edgeGapL[0] = 0;
+        // Determine left/right fissure establishment progress for the stage where this cohort originated
+        const pInitL =
+          stIdx === 0 || st.thetaL > ancestry[stIdx - 1].thetaL + 1e-9
+            ? pStage
+            : 1.0;
+        const pInitR =
+          stIdx === 0 || st.thetaR < ancestry[stIdx - 1].thetaR - 1e-9
+            ? pStage
+            : 1.0;
+        const initApexL = (pInitL * woundApexHalfWidthMm) / rSafe;
+        const initApexR = (pInitR * woundApexHalfWidthMm) / rSafe;
+        edgePosL[0] = st.thetaL + initApexL;
+        edgeGapL[0] = initApexL;
         nEdgesL = 1;
-        edgePosR[0] = st.thetaR;
-        edgeGapR[0] = 0;
+        edgePosR[0] = st.thetaR - initApexR;
+        edgeGapR[0] = initApexR;
         nEdgesR = 1;
         initialized = true;
       }
@@ -594,20 +621,16 @@ export function buildAnatomicalBarkGeometry(
       }
     }
 
-    if (!initialized) {
-      return 1.0;
-    }
-
     const targetBevelMm =
       morphology === 'plated-scaly'
-        ? 0.95 + 0.025 * zMid
-        : 2.2 + 0.22 * zMid;
-    const maxBevelRad = targetBevelMm / rCurrentCohort;
+        ? 0.9 + 0.024 * zMid
+        : 2.1 + 0.2 * zMid;
+    const maxBevelRad = targetBevelMm / rSafe;
 
     let presence = 1.0;
     for (let e = 0; e < nEdgesL; e++) {
       const alpha = edgePosL[e];
-      const bevel = Math.min(maxBevelRad, edgeGapL[e] * 1.6);
+      const bevel = Math.min(maxBevelRad, edgeGapL[e] * 1.5);
       const fL =
         bevel <= 1e-7
           ? unwrapped >= alpha
@@ -618,7 +641,7 @@ export function buildAnatomicalBarkGeometry(
     }
     for (let e = 0; e < nEdgesR; e++) {
       const beta = edgePosR[e];
-      const bevel = Math.min(maxBevelRad, edgeGapR[e] * 1.6);
+      const bevel = Math.min(maxBevelRad, edgeGapR[e] * 1.5);
       const fR =
         bevel <= 1e-7
           ? unwrapped <= beta
@@ -662,9 +685,9 @@ export function buildAnatomicalBarkGeometry(
 
     const plate = plates[pCursor];
 
-    const matureFlakeWeight = smoothstep(36, 56, totalProducedRhytidomeMm);
+    const matureFlakeWeight = smoothstep(26, 44, totalProducedRhytidomeMm);
     const plateShedMm = clamp(
-      baseShedMm + matureFlakeWeight * plate.exfoliationOffsetMm,
+      baseShedMm + matureFlakeWeight * plate.exfoliationOffsetMm * 0.75,
       0,
       Math.max(0, totalProducedRhytidomeMm - 1.0)
     );
@@ -673,20 +696,7 @@ export function buildAnatomicalBarkGeometry(
       totalProducedRhytidomeMm - plateShedMm
     );
 
-    const baseFloorFrac =
-      morphology === 'plated-scaly'
-        ? 1 - profile.bark.fissureDepthFraction * 1.12
-        : 1 - profile.bark.fissureDepthFraction * 1.14;
-    const floorMod = 1 + 0.12 * floorNoise.polarFbm(theta, 5.0, 3.1, 2);
-    const floorFrac = clamp(baseFloorFrac * floorMod, 0.15, 0.36);
-    const meanRetainedRhytMm = Math.max(
-      1.0,
-      totalProducedRhytidomeMm - baseShedMm
-    );
-    const floorHeightMm = meanRetainedRhytMm * floorFrac;
-
     // Global physical-mm fracture-root dip & groove muting summed across all active fissures
-    // (newly initiated fissures have progress p = 0, guaranteeing zero jump across splits!)
     const dipDecayMm = clamp(2.2 + rPhloem * 0.024, 2.2, 9.5);
     const muteDecayMm = dipDecayMm * 1.1;
     let dipSum = 0;
@@ -703,7 +713,20 @@ export function buildAnatomicalBarkGeometry(
         if (mVal > nearActiveGroove) nearActiveGroove = mVal;
       }
     }
-    const rootDip = 1 - 0.15 * Math.min(1.25, dipSum);
+
+    // Thin non-banded dark resinous wound-periderm seal covering living phloem in groove troughs,
+    // gently indented right at the fissure apex so trough minima remain locked at fissure centers
+    const baseSealMm =
+      morphology === 'plated-scaly'
+        ? clamp(0.95 + meanRetainedGlobalMm * 0.045, 0.95, 2.4)
+        : clamp(1.35 + meanRetainedGlobalMm * 0.095, 1.35, 5.5);
+    const localSealMm =
+      baseSealMm *
+      (1 - 0.26 * Math.min(1.1, dipSum)) *
+      (1 + 0.05 * floorNoise.polarFbm(theta, 5.0, 3.1, 2));
+    grooveSealGrid[i] = localSealMm;
+
+    const rootDip = 1 - 0.12 * Math.min(1.25, dipSum);
     const crustMute = 1 - 0.85 * nearActiveGroove;
     const archMod = 1 + 0.025 * crustMute * archNoise.polarFbm(theta, 6.0, 1.9, 2);
     const surfNoiseFactor =
@@ -731,36 +754,22 @@ export function buildAnatomicalBarkGeometry(
         if (dH > 1e-4) {
           const zMid = 0.5 * (zInUnclipped + zOut);
           const zMidMaterial = 0.5 * (zInUnclipped + rawZOut);
+          const rBirthLocal =
+            sampleOnWoodGrid(coh.birthWoodRadii, theta) +
+            clamp(1.0 + coh.meanBirthPhloemRadiusMm * 0.013, 1.0, 4.2);
+          const rCurrentCohort = rPhloem + zMidMaterial;
 
-          const aboveFloorWeight = smoothstep(
-            floorHeightMm * 0.65,
-            floorHeightMm * 1.15,
-            zOut
+          const presence = computeCohortPresence(
+            plate.ancestry,
+            rBirthLocal,
+            rCurrentCohort,
+            zMid,
+            zOut,
+            plateMaxRhytMm,
+            unwrapped
           );
 
-          if (aboveFloorWeight <= 0.001) {
-            localLayerThick = dH * profileScale;
-          } else {
-            const rBirthLocal =
-              sampleOnWoodGrid(coh.birthWoodRadii, theta) +
-              clamp(1.0 + coh.meanBirthPhloemRadiusMm * 0.013, 1.0, 4.2);
-            const rCurrentCohort = rPhloem + zMidMaterial;
-
-            const presence = computeCohortPresence(
-              plate.ancestry,
-              rBirthLocal,
-              rCurrentCohort,
-              zMid,
-              zOut,
-              plateMaxRhytMm,
-              unwrapped
-            );
-
-            localLayerThick =
-              dH *
-              profileScale *
-              (1 - aboveFloorWeight + aboveFloorWeight * presence);
-          }
+          localLayerThick = dH * profileScale * presence;
         }
       }
 
@@ -768,7 +777,7 @@ export function buildAnatomicalBarkGeometry(
       cohortZ[s + 1][i] = cumZ;
     }
 
-    outerBarkRadiusMm.push(rPhloem + Math.max(0.45, cumZ));
+    outerBarkRadiusMm.push(rPhloem + Math.max(localSealMm, cumZ));
   }
 
   const sampleBarkGrid = (
@@ -837,9 +846,11 @@ export function buildAnatomicalBarkGeometry(
           const theta = arcStart + frac * arcSpan;
           const z0 = sampleBarkGrid(zInArr, theta);
           const z1 = sampleBarkGrid(zOutArr, theta);
+          const zSurf = sampleBarkGrid(cohortZ[numActive], theta);
+          const sealMm = sampleBarkGrid(grooveSealGrid, theta);
           const locThick = z1 - z0;
 
-          if (locThick < 0.08) {
+          if (locThick < 0.08 || zSurf <= sealMm + 0.05) {
             flushRun();
             continue;
           }
@@ -876,8 +887,10 @@ export function buildAnatomicalBarkGeometry(
         const theta = (sIdx / seamSteps) * twoPi;
         const z0 = sampleBarkGrid(zInArr, theta);
         const z1 = sampleBarkGrid(zOutArr, theta);
+        const zSurf = sampleBarkGrid(cohortZ[numActive], theta);
+        const sealMm = sampleBarkGrid(grooveSealGrid, theta);
         const locThick = z1 - z0;
-        if (locThick < 0.06) {
+        if (locThick < 0.06 || zSurf <= sealMm + 0.05) {
           flushSeam();
           continue;
         }
@@ -929,18 +942,18 @@ export function buildAnatomicalBarkGeometry(
       for (let sc = 0; sc < scalesPerCircle; sc++) {
         const scStart = tierAngleOffset + boundaryOffsets[sc];
         const scSpan = boundaryOffsets[sc + 1] - boundaryOffsets[sc];
-        const steps = 18;
+        const steps = Math.max(24, Math.ceil((scSpan / twoPi) * 900));
 
-        const tierParityLift = coh.cohortIdx % 2 === 1 ? 6 : -4;
+        const tierParityLift = coh.cohortIdx % 2 === 1 ? 2 : -2;
         const scaleGray = Math.round(
           clamp(
             profile.palette.barkBaseGray +
               24 +
-              tierFrac * 36 +
+              tierFrac * 34 +
               tierParityLift +
-              rngC.range(-10, 11),
-            84,
-            158
+              rngC.range(-7, 8),
+            88,
+            156
           )
         );
 
@@ -954,13 +967,13 @@ export function buildAnatomicalBarkGeometry(
               pointsPolar: [...runOuter, ...runInner.slice().reverse()],
               fillGray: scaleGray,
               strokeGray: profile.palette.barkFissureGray,
-              strokeWidthMm: clamp(nominalThick * 0.12, 0.13, 0.48),
+              strokeWidthMm: clamp(nominalThick * 0.075, 0.07, 0.19),
             });
-            if (nominalThick > 1.45 && runLam.length >= 2) {
+            if (nominalThick > 1.75 && runLam.length >= 2) {
               peridermSeams.push({
                 pointsPolar: runLam,
-                gray: clamp(scaleGray - 18, 54, 122),
-                widthMm: clamp(nominalThick * 0.045, 0.07, 0.17),
+                gray: clamp(scaleGray - 16, 58, 124),
+                widthMm: clamp(nominalThick * 0.038, 0.05, 0.11),
               });
             }
           }
@@ -975,9 +988,10 @@ export function buildAnatomicalBarkGeometry(
           const z0 = sampleBarkGrid(zInArr, theta);
           const z1 = sampleBarkGrid(zOutArr, theta);
           const zSurf = sampleBarkGrid(cohortZ[numActive], theta);
+          const sealMm = sampleBarkGrid(grooveSealGrid, theta);
           const locThick = z1 - z0;
 
-          if (locThick < 0.02) {
+          if (locThick < 0.03 || zSurf <= sealMm + 0.05) {
             flushScaleRun();
             continue;
           }

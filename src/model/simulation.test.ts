@@ -594,10 +594,15 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
           (rOut, i) => rOut - sim.bark.phloemOuterRadiusMm[i]
         );
         const maxRhyt = Math.max(...rhyt);
-        const outerThreshold = 0.75 * maxRhyt;
         const arcSecPerStep = (360 * 3600) / rhyt.length;
         const outerArcSec =
-          rhyt.filter((h) => h >= outerThreshold).length * arcSecPerStep;
+          rhyt.reduce((sum, h) => {
+            const t = Math.max(
+              0,
+              Math.min(1, (h - 0.65 * maxRhyt) / Math.max(1e-6, 0.2 * maxRhyt))
+            );
+            return sum + t * t * (3 - 2 * t);
+          }, 0) * arcSecPerStep;
 
         if (prevRhyt !== null) {
           let maxSingleYearGainMm = -Infinity;
@@ -612,8 +617,28 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
           expect(maxSingleYearGainMm).toBeLessThan(2.5);
           // Progressive inward cleavage prevents instantaneous full-depth chasm drops
           expect(maxSingleYearDropMm).toBeGreaterThan(-12.0);
-          // Outer ridge angular occupancy (at >= 75% of max bark thickness) never jumps magically wider
-          expect(outerArcSec - prevOuterArcSec).toBeLessThan(10 * 3600);
+          // Smooth outer ridge angular occupancy never jumps magically wider
+          expect(outerArcSec - prevOuterArcSec).toBeLessThan(6 * 3600);
+        }
+
+        // Deep primary groove troughs must remain free of conveyor-belt cohort cells
+        if (cfg.species === 'ponderosa-pine' && totalAge >= 45) {
+          const minRhyt = Math.min(...rhyt);
+          const minIdx = rhyt.indexOf(minRhyt);
+          const troughAngle = sim.bark.barkAnglesRad[minIdx];
+          const twoPi = 2 * Math.PI;
+          let cellsAtTroughCenter = 0;
+          for (const cell of sim.bark.rhytidomeCells) {
+            for (const pt of cell.pointsPolar) {
+              const diff = Math.abs(((pt.theta - troughAngle) % twoPi + twoPi) % twoPi);
+              const angDist = Math.min(diff, twoPi - diff);
+              if (angDist < 0.0025) {
+                cellsAtTroughCenter++;
+                break;
+              }
+            }
+          }
+          expect(cellsAtTroughCenter).toBe(0);
         }
 
         prevRhyt = rhyt;

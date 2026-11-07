@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Download,
   Copy,
@@ -78,10 +78,32 @@ export const App: React.FC = () => {
     transparentBackground: false,
   });
 
-  const [envDataset, setEnvDataset] = useState<EnvironmentDataset | null>(null);
+  const [fetchedEnv, setFetchedEnv] = useState<{
+    key: string;
+    dataset: EnvironmentDataset;
+  } | null>(null);
   const [loadingEnv, setLoadingEnv] = useState<boolean>(true);
   const [hoveredRing, setHoveredRing] = useState<number | null>(null);
   const [copiedSvg, setCopiedSvg] = useState<boolean>(false);
+
+  const startYear = effectiveDeathYear - Math.max(4, totalAge);
+  const currentEnvKey = `${latitude.toFixed(4)}:${longitude.toFixed(4)}:${startYear}:${effectiveDeathYear}`;
+
+  // Synchronous cache lookup prevents any 1-render mismatch when toggling between visited sites
+  const syncCachedEnv = useMemo(
+    () =>
+      getCachedEnvironmentDataset(
+        latitude,
+        longitude,
+        startYear,
+        effectiveDeathYear
+      ),
+    [latitude, longitude, startYear, effectiveDeathYear]
+  );
+
+  const matchedEnvDataset =
+    syncCachedEnv ??
+    (fetchedEnv?.key === currentEnvKey ? fetchedEnv.dataset : null);
 
   // Sync coordinate text fields when preset or map updates numeric state
   const handleSelectLocation = useCallback((lat: number, lon: number) => {
@@ -89,6 +111,7 @@ export const App: React.FC = () => {
     setLongitude(lon);
     setLatInput(lat.toFixed(5));
     setLonInput(lon.toFixed(5));
+    setHoveredRing(null);
   }, []);
 
   const commitCoordInputs = useCallback(() => {
@@ -108,17 +131,9 @@ export const App: React.FC = () => {
     }
   }, [latInput, lonInput, latitude, longitude]);
 
-  // Fetch environmental & historical climate data when location or year span changes
+  // Fetch environmental & historical climate data when location or year span is not yet cached
   useEffect(() => {
-    const startYear = effectiveDeathYear - Math.max(4, totalAge);
-    const cachedSync = getCachedEnvironmentDataset(
-      latitude,
-      longitude,
-      startYear,
-      effectiveDeathYear
-    );
-    if (cachedSync) {
-      setEnvDataset(cachedSync);
+    if (syncCachedEnv) {
       setLoadingEnv(false);
       return;
     }
@@ -129,7 +144,7 @@ export const App: React.FC = () => {
     loadEnvironmentDataset(latitude, longitude, startYear, effectiveDeathYear)
       .then((dataset) => {
         if (!cancelled) {
-          setEnvDataset(dataset);
+          setFetchedEnv({ key: currentEnvKey, dataset });
           setLoadingEnv(false);
         }
       })
@@ -142,11 +157,16 @@ export const App: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [latitude, longitude, totalAge, effectiveDeathYear]);
+  }, [latitude, longitude, startYear, effectiveDeathYear, currentEnvKey, syncCachedEnv]);
+
+  const lastValidSimulationRef = useRef<TreeSimulationResult | null>(null);
 
   const simulation: TreeSimulationResult | null = useMemo(() => {
-    if (!envDataset) return null;
-    return simulateTreeCrossSection(
+    if (!matchedEnvDataset) {
+      // Keep displaying the previous coherent specimen while the new site's weather loads
+      return lastValidSimulationRef.current;
+    }
+    const nextSim = simulateTreeCrossSection(
       {
         species,
         latitude,
@@ -154,9 +174,11 @@ export const App: React.FC = () => {
         totalAge,
         deathYear: effectiveDeathYear,
       },
-      envDataset
+      matchedEnvDataset
     );
-  }, [species, latitude, longitude, totalAge, effectiveDeathYear, envDataset]);
+    lastValidSimulationRef.current = nextSim;
+    return nextSim;
+  }, [species, latitude, longitude, totalAge, effectiveDeathYear, matchedEnvDataset]);
 
   const svgBundle = useMemo(() => {
     if (!simulation) return null;

@@ -8,7 +8,11 @@ import {
   isWithinSpeciesNativeRange,
   projectToLocatorMap,
 } from './locatorMapData';
-import { generateCrossSectionSvg } from './svgGenerator';
+import { LOCATION_PRESETS } from './species';
+import {
+  generateCrossSectionSvg,
+  generateCrossSectionSvgBundle,
+} from './svgGenerator';
 import { EnvironmentDataset, MonthlyClimateYear } from './types';
 import {
   chooseScaleBar,
@@ -340,5 +344,68 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
       transparentBackground: false,
     });
     expect(svgWithoutMap).not.toContain('id="locator-map"');
+  });
+
+  it('keeps scale bar, compass, and cross-section strictly inside viewBox across all US reference forest sites and ages', () => {
+    const xericEnv = makeMockEnvironment(8.8, 390, 18, 225);
+    const mesicEnv = makeMockEnvironment(10.2, 2600, 12, 140);
+
+    for (const preset of LOCATION_PRESETS) {
+      const env =
+        preset.recommendedSpecies === 'ponderosa-pine' ? xericEnv : mesicEnv;
+      for (const totalAge of [12, 65, 160]) {
+        const sim = simulateTreeCrossSection(
+          {
+            species: preset.recommendedSpecies,
+            latitude: preset.latitude,
+            longitude: preset.longitude,
+            totalAge,
+            deathYear: 2026,
+          },
+          env
+        );
+
+        for (const showLocatorMap of [true, false]) {
+          const bundle = generateCrossSectionSvgBundle(sim, {
+            showBark: true,
+            showMedullaryRays: true,
+            showAnnotations: true,
+            showLocatorMap,
+            transparentBackground: false,
+            unitSystem: 'us',
+          });
+
+          const { x: vbX, y: vbY, width: vbW, height: vbH } = bundle.viewBox;
+          const vbRight = vbX + vbW;
+          const vbBottom = vbY + vbH;
+
+          // Extract scale bar horizontal line (first <line> in #annotations)
+          const annotMatch = bundle.innerMarkup.match(
+            /<g id="annotations"[^>]*>\s*<line x1="([^"]+)" y1="([^"]+)" x2="([^"]+)" y2="([^"]+)"/
+          );
+          expect(annotMatch).not.toBeNull();
+          const barX1 = Number(annotMatch![1]);
+          const barY1 = Number(annotMatch![2]);
+          const barX2 = Number(annotMatch![3]);
+
+          expect(barX1).toBeGreaterThan(vbX);
+          expect(barX2).toBeLessThan(vbRight);
+          expect(barY1).toBeGreaterThan(vbY);
+          expect(barY1).toBeLessThan(vbBottom);
+
+          // Every outer bark vertex must also sit comfortably inside viewBox
+          for (let i = 0; i < sim.bark.outerBarkRadiusMm.length; i++) {
+            const r = sim.bark.outerBarkRadiusMm[i];
+            const th = sim.bark.barkAnglesRad[i];
+            const px = r * Math.cos(th);
+            const py = r * Math.sin(th);
+            expect(px).toBeGreaterThan(vbX);
+            expect(px).toBeLessThan(vbRight);
+            expect(py).toBeGreaterThan(vbY);
+            expect(py).toBeLessThan(vbBottom);
+          }
+        }
+      }
+    }
   });
 });

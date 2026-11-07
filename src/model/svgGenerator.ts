@@ -198,6 +198,12 @@ export function generateCrossSectionSvgBundle(
       }
     }
   }
+  if (options.showAnnotations) {
+    const minAnnotatedWidth = maxSpan * 1.24;
+    if (spanX + padX * 2 < minAnnotatedWidth) {
+      padX = (minAnnotatedWidth - spanX) / 2;
+    }
+  }
 
   const vbX = minX - padX;
   const vbW = spanX + padX * 2;
@@ -415,9 +421,9 @@ export function generateCrossSectionSvgBundle(
   // Layer 4: Scientific Scale Bar, Orientation Compass, & Specimen Metadata
   if (options.showAnnotations) {
     const units: UnitSystem = options.unitSystem ?? 'us';
-    const fontSize = Math.max(2.4, maxSpan * 0.024);
+    const fontSize = maxSpan * 0.0235;
     const smallFont = fontSize * 0.78;
-    const strokeW = Math.max(0.25, maxSpan * 0.0024);
+    const strokeW = maxSpan * 0.0023;
 
     const scaleSpec = chooseScaleBar(maxSpan, units);
     const scaleMm = scaleSpec.lengthMm;

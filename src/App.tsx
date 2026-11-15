@@ -9,12 +9,35 @@ import {
   Sliders,
   Monitor,
   X,
+  Info,
+  Sparkles,
+  Share2,
+  Maximize2,
+  Minimize2,
+  Activity,
+  BookOpen,
 } from 'lucide-react';
+import { ColophonModal } from './components/ColophonModal';
+import { DendroTutorialModal } from './components/DendroTutorialModal';
 import { MonochromeMapPicker } from './components/MonochromeMapPicker';
 import { SvgViewport } from './components/SvgViewport';
 import { RingChronologyChart } from './components/RingChronologyChart';
+import { TimeNavigation, TimeNavMode } from './components/TimeNavigation';
+import {
+  buildShareableUrl,
+  deserializePermalink,
+  PaletteId,
+  serializePermalink,
+} from './model/permalink';
+import { export4kPng, exportStandaloneSvg } from './model/exportPipeline';
 import { simulateTreeCrossSection } from './model/growthEngine';
 import { generateEnvironmentalNarrative } from './model/narrative';
+import {
+  getPresetById,
+  PresetId,
+  RETROSPECTIVE_PRESETS,
+  RetrospectivePreset,
+} from './model/presets';
 import { LOCATION_PRESETS, SPECIES_PROFILES } from './model/species';
 import {
   generateCrossSectionSvgBundle,
@@ -85,6 +108,105 @@ export const App: React.FC = () => {
   const [loadingEnv, setLoadingEnv] = useState<boolean>(true);
   const [hoveredRing, setHoveredRing] = useState<number | null>(null);
   const [copiedSvg, setCopiedSvg] = useState<boolean>(false);
+  const [copiedShareLink, setCopiedShareLink] = useState<boolean>(false);
+  const [isColophonOpen, setIsColophonOpen] = useState<boolean>(false);
+  const [isTutorialOpen, setIsTutorialOpen] = useState<boolean>(false);
+  const [activePresetId, setActivePresetId] = useState<PresetId | string | null>('bristlecone-ancient');
+
+  // Milestone 3 Time Navigation, Playback & Exhibition State
+  const [navMode, setNavMode] = useState<TimeNavMode>('peel');
+  const [activeRingIndex, setActiveRingIndex] = useState<number | null>(null);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(10);
+  const [isExhibitionMode, setIsExhibitionMode] = useState<boolean>(false);
+  const [ambientDriftEnabled, setAmbientDriftEnabled] = useState<boolean>(true);
+  const [controlsVisible, setControlsVisible] = useState<boolean>(true);
+  const hideControlsTimerRef = useRef<number | null>(null);
+  const targetPermalinkYearRef = useRef<number | null>(null);
+
+  // Milestone 4 Palettes, Grain Texture, Colophon & Archival Export State
+  const [selectedPalette, setSelectedPalette] = useState<PaletteId>('aged-wood');
+  const [enableWoodGrain, setEnableWoodGrain] = useState<boolean>(true);
+  const [includeColophonBorder, setIncludeColophonBorder] = useState<boolean>(false);
+  const [isExportingPng, setIsExportingPng] = useState<boolean>(false);
+  const [exportToastNotice, setExportToastNotice] = useState<string | null>(null);
+
+  const handleSelectPreset = useCallback((preset: RetrospectivePreset) => {
+    setActivePresetId(preset.id);
+    setSpecies(preset.species);
+    setLatitude(preset.latitude);
+    setLongitude(preset.longitude);
+    setLatInput(preset.latitude.toFixed(5));
+    setLonInput(preset.longitude.toFixed(5));
+    setTotalAge(preset.totalAge);
+    if (preset.deathYear) {
+      setOverrideDeathYear(true);
+      setCustomDeathYear(preset.deathYear);
+    } else {
+      setOverrideDeathYear(false);
+    }
+    if (preset.recommendedPalette) {
+      setSelectedPalette(preset.recommendedPalette);
+    }
+    if (preset.initialMode) {
+      setNavMode(preset.initialMode);
+    }
+    setHoveredRing(null);
+    setActiveRingIndex(null);
+    setIsPlaying(false);
+  }, []);
+
+  // Read initial permalink parameters from URL on startup
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const initialQuery = window.location.search || window.location.hash;
+    if (!initialQuery) return;
+
+    const parsed = deserializePermalink(initialQuery);
+    if (parsed.preset) {
+      const p = getPresetById(parsed.preset);
+      if (p) {
+        handleSelectPreset(p);
+      }
+    }
+    if (parsed.pal) {
+      setSelectedPalette(parsed.pal);
+    }
+    if (
+      parsed.sp &&
+      (parsed.sp === 'douglas-fir' ||
+        parsed.sp === 'ponderosa-pine' ||
+        parsed.sp === 'bristlecone-pine')
+    ) {
+      setSpecies(parsed.sp);
+      if (!parsed.preset) setActivePresetId(null);
+    }
+    if (parsed.lat !== undefined) {
+      setLatitude(parsed.lat);
+      setLatInput(parsed.lat.toFixed(5));
+      if (!parsed.preset) setActivePresetId(null);
+    }
+    if (parsed.lon !== undefined) {
+      setLongitude(parsed.lon);
+      setLonInput(parsed.lon.toFixed(5));
+      if (!parsed.preset) setActivePresetId(null);
+    }
+    if (parsed.age !== undefined) {
+      setTotalAge(parsed.age);
+      if (!parsed.preset) setActivePresetId(null);
+    }
+    if (parsed.death !== undefined) {
+      setOverrideDeathYear(true);
+      setCustomDeathYear(parsed.death);
+      if (!parsed.preset) setActivePresetId(null);
+    }
+    if (parsed.mode) {
+      setNavMode(parsed.mode);
+    }
+    if (parsed.year !== undefined) {
+      targetPermalinkYearRef.current = parsed.year;
+    }
+  }, [handleSelectPreset]);
   const [showDeviceNotice, setShowDeviceNotice] = useState<boolean>(() => {
     try {
       return sessionStorage.getItem('dendro_dismiss_device_notice') !== '1';
@@ -198,16 +320,6 @@ export const App: React.FC = () => {
     return nextSim;
   }, [species, latitude, longitude, totalAge, effectiveDeathYear, matchedEnvDataset]);
 
-  const svgBundle = useMemo(() => {
-    if (!simulation) return null;
-    return generateCrossSectionSvgBundle(simulation, {
-      ...renderOptions,
-      unitSystem,
-    });
-  }, [simulation, renderOptions, unitSystem]);
-
-  const svgMarkup = svgBundle?.svgMarkup ?? '';
-
   const ringsByIndex = useMemo(() => {
     const m = new Map<number, AnnualRingRecord>();
     if (!simulation) return m;
@@ -222,29 +334,280 @@ export const App: React.FC = () => {
     [simulation]
   );
 
-  const handleDownloadSvg = useCallback(() => {
-    if (!simulation || !svgMarkup) return;
-    const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `dendrosim-${species}-${latitude.toFixed(4)}_${longitude.toFixed(4)}-age${totalAge}-${effectiveDeathYear}.svg`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }, [simulation, svgMarkup, species, latitude, longitude, totalAge, effectiveDeathYear]);
+  // Synchronize activeRingIndex when simulation completes
+  useEffect(() => {
+    if (!simulation) return;
+    if (targetPermalinkYearRef.current !== null) {
+      const targetYear = targetPermalinkYearRef.current;
+      const target = simulation.rings.find(
+        (r) => r.record.calendarYear === targetYear
+      );
+      if (target) {
+        setActiveRingIndex(target.record.ringIndex);
+      }
+      targetPermalinkYearRef.current = null;
+      if (target) {
+        return;
+      }
+    }
+    if (
+      activeRingIndex === null ||
+      activeRingIndex > simulation.visibleRingCount
+    ) {
+      setActiveRingIndex(simulation.visibleRingCount);
+    }
+  }, [simulation, activeRingIndex]);
+
+  const effectiveMaxRenderedRing =
+    activeRingIndex !== null
+      ? Math.max(
+          1,
+          Math.min(simulation?.visibleRingCount ?? 1, activeRingIndex)
+        )
+      : simulation?.visibleRingCount;
+
+  const svgBundle = useMemo(() => {
+    if (!simulation) return null;
+    return generateCrossSectionSvgBundle(simulation, {
+      ...renderOptions,
+      unitSystem,
+      highlightedRingIndex: hoveredRing ?? (isPlaying ? null : effectiveMaxRenderedRing),
+      maxRenderedRingIndex: effectiveMaxRenderedRing,
+      paletteId: selectedPalette,
+      enableWoodGrain: enableWoodGrain,
+    });
+  }, [
+    simulation,
+    renderOptions,
+    unitSystem,
+    hoveredRing,
+    isPlaying,
+    effectiveMaxRenderedRing,
+    selectedPalette,
+    enableWoodGrain,
+  ]);
+
+  // Continuous growth playback animation loop
+  useEffect(() => {
+    if (!isPlaying || !simulation) return;
+
+    let animId: number;
+    let lastTick = performance.now();
+    const intervalMs = 1000 / playbackSpeed;
+
+    const tick = (now: number) => {
+      const elapsed = now - lastTick;
+      if (elapsed >= intervalMs) {
+        lastTick = now;
+        setActiveRingIndex((cur) => {
+          const current = cur ?? simulation.visibleRingCount;
+          if (navMode === 'grow') {
+            if (current >= simulation.visibleRingCount) {
+              return 1;
+            }
+            return current + 1;
+          } else {
+            // Peel mode: peeling backward toward heartwood
+            if (current <= 1) {
+              return simulation.visibleRingCount;
+            }
+            return current - 1;
+          }
+        });
+      }
+      animId = requestAnimationFrame(tick);
+    };
+
+    animId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animId);
+  }, [isPlaying, playbackSpeed, navMode, simulation]);
+
+  // Live URL permalink synchronization
+  useEffect(() => {
+    if (!simulation || typeof window === 'undefined') return;
+
+    const timeout = setTimeout(() => {
+      const activeRec =
+        effectiveMaxRenderedRing !== undefined
+          ? ringsByIndex.get(effectiveMaxRenderedRing)
+          : undefined;
+
+      const permalinkQuery = serializePermalink({
+        sp: species,
+        lat: latitude,
+        lon: longitude,
+        age: totalAge,
+        death: effectiveDeathYear,
+        mode: navMode,
+        year: activeRec?.calendarYear,
+        preset: activePresetId ?? undefined,
+        pal: selectedPalette,
+      });
+
+      if (window.history && window.history.replaceState) {
+        const newUrl = `${window.location.pathname}${permalinkQuery}`;
+        window.history.replaceState(null, '', newUrl);
+      }
+    }, 280);
+
+    return () => clearTimeout(timeout);
+  }, [
+    species,
+    latitude,
+    longitude,
+    totalAge,
+    effectiveDeathYear,
+    navMode,
+    effectiveMaxRenderedRing,
+    activePresetId,
+    ringsByIndex,
+    simulation,
+    selectedPalette,
+  ]);
+
+  // Copy share link with clipboard visual confirmation
+  const handleCopyShareLink = useCallback(async () => {
+    try {
+      const activeRec =
+        effectiveMaxRenderedRing !== undefined
+          ? ringsByIndex.get(effectiveMaxRenderedRing)
+          : undefined;
+
+      const fullUrl = buildShareableUrl({
+        sp: species,
+        lat: latitude,
+        lon: longitude,
+        age: totalAge,
+        death: effectiveDeathYear,
+        mode: navMode,
+        year: activeRec?.calendarYear,
+        preset: activePresetId ?? undefined,
+        pal: selectedPalette,
+      });
+
+      await navigator.clipboard.writeText(fullUrl);
+      setCopiedShareLink(true);
+      setTimeout(() => setCopiedShareLink(false), 2000);
+    } catch {
+      // Ignore clipboard restrictions
+    }
+  }, [
+    species,
+    latitude,
+    longitude,
+    totalAge,
+    effectiveDeathYear,
+    navMode,
+    effectiveMaxRenderedRing,
+    activePresetId,
+    ringsByIndex,
+    selectedPalette,
+  ]);
+
+  // Exhibition mode toggle
+  const toggleExhibitionMode = useCallback(() => {
+    setIsExhibitionMode((prev) => {
+      const next = !prev;
+      if (next) {
+        if (document.documentElement.requestFullscreen) {
+          document.documentElement.requestFullscreen().catch(() => {});
+        }
+      } else {
+        if (document.fullscreenElement && document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  // Sync fullscreen change event
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement && isExhibitionMode) {
+        setIsExhibitionMode(false);
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () =>
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, [isExhibitionMode]);
+
+  // Keydown for 'F' / 'f' and 'Escape'
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        toggleExhibitionMode();
+      } else if (e.key === 'Escape') {
+        if (isExhibitionMode) {
+          setIsExhibitionMode(false);
+          if (document.fullscreenElement && document.exitFullscreen) {
+            document.exitFullscreen().catch(() => {});
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [toggleExhibitionMode, isExhibitionMode]);
+
+  // Floating controls auto-hide in Exhibition mode
+  const resetControlsTimer = useCallback(() => {
+    setControlsVisible(true);
+    if (hideControlsTimerRef.current) {
+      window.clearTimeout(hideControlsTimerRef.current);
+    }
+    if (isExhibitionMode) {
+      hideControlsTimerRef.current = window.setTimeout(() => {
+        setControlsVisible(false);
+      }, 3500);
+    }
+  }, [isExhibitionMode]);
+
+  useEffect(() => {
+    if (!isExhibitionMode) {
+      setControlsVisible(true);
+      return;
+    }
+    resetControlsTimer();
+    const handlePointer = () => resetControlsTimer();
+    window.addEventListener('pointermove', handlePointer);
+    return () => {
+      window.removeEventListener('pointermove', handlePointer);
+      if (hideControlsTimerRef.current) {
+        window.clearTimeout(hideControlsTimerRef.current);
+      }
+    };
+  }, [isExhibitionMode, resetControlsTimer]);
+
+  const envNarrative = useMemo(
+    () => (simulation ? generateEnvironmentalNarrative(simulation, unitSystem) : null),
+    [simulation, unitSystem]
+  );
 
   const handleCopySvg = useCallback(async () => {
-    if (!svgMarkup) return;
+    const markup = svgBundle?.svgMarkup;
+    if (!markup) return;
     try {
-      await navigator.clipboard.writeText(svgMarkup);
+      await navigator.clipboard.writeText(markup);
       setCopiedSvg(true);
       setTimeout(() => setCopiedSvg(false), 1800);
     } catch {
       // Clipboard API may be blocked in some contexts
     }
-  }, [svgMarkup]);
+  }, [svgBundle]);
 
   const activeProfile = SPECIES_PROFILES[species];
   const viabilityDetail = useMemo(
@@ -255,13 +618,105 @@ export const App: React.FC = () => {
     [simulation, activeProfile, unitSystem]
   );
 
-  const envNarrative = useMemo(
-    () => (simulation ? generateEnvironmentalNarrative(simulation, unitSystem) : null),
-    [simulation, unitSystem]
-  );
+  const handleExportSvg = useCallback(() => {
+    if (!simulation || !svgBundle) return;
+    exportStandaloneSvg(simulation, {
+      svgBundle,
+      unitSystem,
+      paletteId: selectedPalette,
+      includeColophon: includeColophonBorder,
+      narrative: envNarrative?.story,
+      transparentBackground: renderOptions.transparentBackground,
+      permalinkUrl: buildShareableUrl({
+        sp: species,
+        lat: latitude,
+        lon: longitude,
+        age: totalAge,
+        death: effectiveDeathYear,
+        mode: navMode,
+        year: ringsByIndex.get(effectiveMaxRenderedRing ?? simulation.visibleRingCount)?.calendarYear,
+        preset: activePresetId ?? undefined,
+        pal: selectedPalette,
+      }),
+    });
+    setExportToastNotice(includeColophonBorder ? 'Archival Plate SVG Exported' : 'Archival SVG Downloaded');
+    setTimeout(() => setExportToastNotice(null), 2500);
+  }, [
+    simulation,
+    svgBundle,
+    unitSystem,
+    selectedPalette,
+    includeColophonBorder,
+    envNarrative,
+    renderOptions.transparentBackground,
+    species,
+    latitude,
+    longitude,
+    totalAge,
+    effectiveDeathYear,
+    navMode,
+    effectiveMaxRenderedRing,
+    ringsByIndex,
+    activePresetId,
+  ]);
+
+  const handleExport4kPng = useCallback(async () => {
+    if (!simulation || !svgBundle || isExportingPng) return;
+    setIsExportingPng(true);
+    try {
+      await export4kPng(simulation, {
+        svgBundle,
+        unitSystem,
+        paletteId: selectedPalette,
+        includeColophon: includeColophonBorder,
+        targetDpi: 300,
+        narrative: envNarrative?.story,
+        transparentBackground: renderOptions.transparentBackground,
+        permalinkUrl: buildShareableUrl({
+          sp: species,
+          lat: latitude,
+          lon: longitude,
+          age: totalAge,
+          death: effectiveDeathYear,
+          mode: navMode,
+          year: ringsByIndex.get(effectiveMaxRenderedRing ?? simulation.visibleRingCount)?.calendarYear,
+          preset: activePresetId ?? undefined,
+          pal: selectedPalette,
+        }),
+      });
+      setExportToastNotice(
+        includeColophonBorder ? '4K Archival Plate PNG Exported' : '4K PNG Exported'
+      );
+      setTimeout(() => setExportToastNotice(null), 3000);
+    } catch (err) {
+      console.error('Failed to export 4K PNG:', err);
+      setExportToastNotice('Export failed');
+      setTimeout(() => setExportToastNotice(null), 3000);
+    } finally {
+      setIsExportingPng(false);
+    }
+  }, [
+    simulation,
+    svgBundle,
+    isExportingPng,
+    unitSystem,
+    selectedPalette,
+    includeColophonBorder,
+    envNarrative,
+    renderOptions.transparentBackground,
+    species,
+    latitude,
+    longitude,
+    totalAge,
+    effectiveDeathYear,
+    navMode,
+    effectiveMaxRenderedRing,
+    ringsByIndex,
+    activePresetId,
+  ]);
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${isExhibitionMode ? 'exhibition-mode' : ''}`}>
       {hoveredRing !== null && (
         <style>{`
           .svg-viewport svg path[data-ring="${hoveredRing}"][data-year] {
@@ -279,46 +734,118 @@ export const App: React.FC = () => {
             <div className="brand-title">
               <img
                 src="./favicon.svg"
-                alt=""
+                alt="XYLEM Specimen Mark"
                 width={24}
                 height={24}
-                className="brand-cookie-icon"
+                className="brand-specimen-icon"
               />
-              <h1>DendroSim</h1>
+              <div className="brand-title-group">
+                <h1>XYLEM</h1>
+                <span className="brand-tagline">An Ecological Ledger of Deep Time</span>
+              </div>
             </div>
-            <div
-              className="unit-segmented"
-              role="group"
-              aria-label="Units of measure"
-            >
+            <div className="brand-header-actions">
               <button
                 type="button"
-                className={unitSystem === 'us' ? 'active' : ''}
-                title="US Customary units (in, ft, °F)"
-                onClick={() => setUnitSystem('us')}
+                className="btn-colophon-trigger"
+                onClick={() => setIsColophonOpen(true)}
+                aria-label="Open Colophon and Artist Statement"
+                title="Colophon & Ecological Ledger Statement"
               >
-                US
+                <Info size={13} aria-hidden="true" />
+                <span>Colophon</span>
               </button>
               <button
                 type="button"
-                className={unitSystem === 'metric' ? 'active' : ''}
-                title="Metric units (mm, cm, m, °C)"
-                onClick={() => setUnitSystem('metric')}
+                className="btn-colophon-trigger"
+                onClick={() => setIsTutorialOpen(true)}
+                aria-label="Open Dendrochronology & Wood Anatomy Guide"
+                title="Interactive Dendrochronology & Cross-Section Guide"
               >
-                Metric
+                <BookOpen size={13} aria-hidden="true" />
+                <span>Guide</span>
               </button>
+              <button
+                type="button"
+                className="btn-exhibition-trigger"
+                onClick={toggleExhibitionMode}
+                aria-label="Enter Fullscreen Exhibition Mode (F)"
+                title="Fullscreen Exhibition Mode (Press F)"
+              >
+                <Maximize2 size={13} aria-hidden="true" />
+                <span>Exhibit</span>
+              </button>
+              <div
+                className="unit-segmented"
+                role="group"
+                aria-label="Units of measure"
+              >
+                <button
+                  type="button"
+                  className={unitSystem === 'us' ? 'active' : ''}
+                  title="US Customary units (in, ft, °F)"
+                  onClick={() => setUnitSystem('us')}
+                >
+                  US
+                </button>
+                <button
+                  type="button"
+                  className={unitSystem === 'metric' ? 'active' : ''}
+                  title="Metric units (mm, cm, m, °C)"
+                  onClick={() => setUnitSystem('metric')}
+                >
+                  Metric
+                </button>
+              </div>
             </div>
           </div>
           <p className="brand-subtitle">
-            Reconstruct a tree’s hidden climate diary from any coordinate in the American West.
+            Retrospective Dendrochronology &amp; Biological Climate Memory Across Deep Environmental Time
           </p>
         </header>
+
+        {/* Retrospective Environmental Scenarios */}
+        <section className="control-section retrospective-presets-section">
+          <div className="section-label-row">
+            <label className="section-label">
+              <Sparkles size={13} /> Retrospective Scenarios
+            </label>
+            <span className="preset-count-indicator">4 Curated Presets</span>
+          </div>
+          <div className="retrospective-presets-grid">
+            {RETROSPECTIVE_PRESETS.map((preset) => {
+              const isSelected = activePresetId === preset.id;
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  className={`scenario-card ${isSelected ? 'selected' : ''}`}
+                  onClick={() => handleSelectPreset(preset)}
+                  title={`${preset.name}: ${preset.description}`}
+                >
+                  <div className="scenario-card-header">
+                    <span className="scenario-name">{preset.name}</span>
+                    <span className="scenario-era-badge">{preset.eraLabel}</span>
+                  </div>
+                  <span className="scenario-species-meta">
+                    {preset.species === 'bristlecone-pine'
+                      ? 'Great Basin Bristlecone Pine'
+                      : preset.species === 'ponderosa-pine'
+                      ? 'Ponderosa Pine'
+                      : 'Douglas-Fir'}
+                  </span>
+                  <p className="scenario-blurb">{preset.subtitle}</p>
+                </button>
+              );
+            })}
+          </div>
+        </section>
 
         {/* 1. Species Selection */}
         <section className="control-section">
           <label className="section-label">1. Species</label>
           <div className="species-toggle-grid">
-            {(['douglas-fir', 'ponderosa-pine'] as SpeciesId[]).map((spId) => {
+            {(['douglas-fir', 'ponderosa-pine', 'bristlecone-pine'] as SpeciesId[]).map((spId) => {
               const prof = SPECIES_PROFILES[spId];
               const selected = species === spId;
               return (
@@ -326,7 +853,10 @@ export const App: React.FC = () => {
                   key={spId}
                   type="button"
                   className={`species-card ${selected ? 'selected' : ''}`}
-                  onClick={() => setSpecies(spId)}
+                  onClick={() => {
+                    setSpecies(spId);
+                    setActivePresetId(null);
+                  }}
                 >
                   <span className="species-common">{prof.commonName}</span>
                   <span className="species-sci">{prof.scientificName}</span>
@@ -341,7 +871,7 @@ export const App: React.FC = () => {
         <section className="control-section">
           <div className="section-label-row">
             <label className="section-label">
-              <MapPin size={13} /> 2. Location (Lat / Lon)
+              <MapPin size={13} /> 2. Geographic Provenance (Lat / Lon)
             </label>
           </div>
 
@@ -349,7 +879,10 @@ export const App: React.FC = () => {
             latitude={latitude}
             longitude={longitude}
             unitSystem={unitSystem}
-            onSelectLocation={handleSelectLocation}
+            onSelectLocation={(lat, lon) => {
+              handleSelectLocation(lat, lon);
+              setActivePresetId(null);
+            }}
           />
 
           <div className="coord-inputs-grid">
@@ -360,7 +893,10 @@ export const App: React.FC = () => {
                 type="text"
                 placeholder="e.g. 44.2124"
                 value={latInput}
-                onChange={(e) => setLatInput(e.target.value)}
+                onChange={(e) => {
+                  setLatInput(e.target.value);
+                  setActivePresetId(null);
+                }}
                 onBlur={commitCoordInputs}
                 onKeyDown={(e) => e.key === 'Enter' && commitCoordInputs()}
               />
@@ -372,7 +908,10 @@ export const App: React.FC = () => {
                 type="text"
                 placeholder="e.g. -122.2557"
                 value={lonInput}
-                onChange={(e) => setLonInput(e.target.value)}
+                onChange={(e) => {
+                  setLonInput(e.target.value);
+                  setActivePresetId(null);
+                }}
                 onBlur={commitCoordInputs}
                 onKeyDown={(e) => e.key === 'Enter' && commitCoordInputs()}
               />
@@ -380,7 +919,7 @@ export const App: React.FC = () => {
           </div>
 
           <div className="preset-block">
-            <span className="preset-heading">US Reference Forest Sites:</span>
+            <span className="preset-heading">Geographic Reference Sites:</span>
             <div className="preset-chips">
               {LOCATION_PRESETS.map((preset) => {
                 const isMatch =
@@ -395,6 +934,7 @@ export const App: React.FC = () => {
                     onClick={() => {
                       handleSelectLocation(preset.latitude, preset.longitude);
                       setSpecies(preset.recommendedSpecies);
+                      setActivePresetId(null);
                     }}
                   >
                     {preset.name}
@@ -409,7 +949,7 @@ export const App: React.FC = () => {
         <section className="control-section age-section">
           <div className="section-label-row">
             <label className="section-label" htmlFor="age-slider">
-              3. Tree Age: {totalAge} Years
+              3. Chronological Span: {totalAge} Years
             </label>
             <div className="age-number-wrap">
               <input
@@ -417,11 +957,12 @@ export const App: React.FC = () => {
                 min={5}
                 max={400}
                 value={totalAge}
-                onChange={(e) =>
+                onChange={(e) => {
                   setTotalAge(
                     Math.max(5, Math.min(400, Number(e.target.value) || 5))
-                  )
-                }
+                  );
+                  setActivePresetId(null);
+                }}
               />
               <span>yrs</span>
             </div>
@@ -434,13 +975,16 @@ export const App: React.FC = () => {
             min={5}
             max={350}
             value={Math.min(350, totalAge)}
-            onChange={(e) => setTotalAge(Number(e.target.value))}
+            onChange={(e) => {
+              setTotalAge(Number(e.target.value));
+              setActivePresetId(null);
+            }}
           />
 
           {simulation && (
             <div className="age-narrative-subtext">
               Germinated {simulation.germinationYear} • First ring at{' '}
-              {formatStumpHeightShort(simulation.stumpHeightM, unitSystem)} cut plane:{' '}
+              {formatStumpHeightShort(simulation.stumpHeightM, unitSystem)} sampling plane:{' '}
               {simulation.firstRingYear} ({simulation.visibleRingCount} visible rings) • Outer cambium:{' '}
               {effectiveDeathYear}
             </div>
@@ -451,21 +995,24 @@ export const App: React.FC = () => {
               <input
                 type="checkbox"
                 checked={overrideDeathYear}
-                onChange={(e) => setOverrideDeathYear(e.target.checked)}
+                onChange={(e) => {
+                  setOverrideDeathYear(e.target.checked);
+                  setActivePresetId(null);
+                }}
               />
-              <span>Harvest / Cambium Year (Default: {currentCalendarYear})</span>
+              <span>Terminal Cambium Horizon (Default: {currentCalendarYear} CE)</span>
             </label>
 
             {overrideDeathYear && (
               <div className="death-year-input-wrap">
-                <label htmlFor="death-year-input">Cambium Year:</label>
+                <label htmlFor="death-year-input">Cambium Horizon:</label>
                 <input
                   id="death-year-input"
                   type="number"
                   min={1600}
                   max={currentCalendarYear}
                   value={customDeathYear}
-                  onChange={(e) =>
+                  onChange={(e) => {
                     setCustomDeathYear(
                       Math.max(
                         1600,
@@ -474,18 +1021,85 @@ export const App: React.FC = () => {
                           Number(e.target.value) || currentCalendarYear
                         )
                       )
-                    )
-                  }
+                    );
+                    setActivePresetId(null);
+                  }}
                 />
               </div>
             )}
           </div>
         </section>
 
-        {/* 4. SVG Display Options */}
+        {/* 4. Organic Color Profile & Grain */}
+        <section className="control-section palette-section">
+          <div className="section-label-row">
+            <label className="section-label">
+              <Sparkles size={13} /> 4. Color Profile &amp; Grain
+            </label>
+            <span className="palette-count-indicator">3 Archival Profiles</span>
+          </div>
+          <div className="palette-cards-grid">
+            {([
+              {
+                id: 'aged-wood' as const,
+                name: 'Aged Heartwood',
+                subtitle: 'Natural Sapwood & Umber Rings',
+                swatches: ['#ebdcc7', '#7b4822', '#a65d2a', '#423226'],
+              },
+              {
+                id: 'charred-subalpine' as const,
+                name: 'Charred Sub-Alpine',
+                subtitle: 'Ash-Gray, Soot & Basalt Char',
+                swatches: ['#c4c2be', '#2c2b29', '#575550', '#1a1918'],
+              },
+              {
+                id: 'skeleton-plot' as const,
+                name: 'Skeleton Plot',
+                subtitle: 'High-Contrast Archival Ledger',
+                swatches: ['#fdfcf7', '#111111', '#c82828', '#222222'],
+              },
+            ]).map((p) => {
+              const isSelected = selectedPalette === p.id;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={`palette-card ${isSelected ? 'selected' : ''}`}
+                  onClick={() => setSelectedPalette(p.id)}
+                  title={`${p.name} — ${p.subtitle}`}
+                >
+                  <div className="palette-swatch-row">
+                    {p.swatches.map((color, idx) => (
+                      <span
+                        key={idx}
+                        className="palette-swatch-dot"
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                  </div>
+                  <div className="palette-card-body">
+                    <span className="palette-card-name">{p.name}</span>
+                    <span className="palette-card-desc">{p.subtitle}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <label className="checkbox-row grain-toggle">
+            <input
+              type="checkbox"
+              checked={enableWoodGrain}
+              onChange={(e) => setEnableWoodGrain(e.target.checked)}
+            />
+            <span>Wood Grain Micro-Texture (Anisotropic Fiber)</span>
+          </label>
+        </section>
+
+        {/* 5. Anatomical Layers */}
         <section className="control-section">
           <label className="section-label">
-            <Sliders size={13} /> 4. Rendering &amp; Export Options
+            <Sliders size={13} /> 5. Anatomical Layers
           </label>
           <div className="toggles-grid">
             <label className="checkbox-row">
@@ -496,7 +1110,7 @@ export const App: React.FC = () => {
                   setRenderOptions((o) => ({ ...o, showBark: e.target.checked }))
                 }
               />
-              <span>Simulate bark</span>
+              <span>Bark Rhytidome &amp; Periderm</span>
             </label>
             <label className="checkbox-row">
               <input
@@ -509,7 +1123,7 @@ export const App: React.FC = () => {
                   }))
                 }
               />
-              <span>Medullary rays</span>
+              <span>Medullary Rays (Xylem Parenchyma)</span>
             </label>
             <label className="checkbox-row">
               <input
@@ -522,7 +1136,7 @@ export const App: React.FC = () => {
                   }))
                 }
               />
-              <span>Scale &amp; compass</span>
+              <span>Scale Bar &amp; Azimuth</span>
             </label>
             <label className="checkbox-row">
               <input
@@ -535,7 +1149,7 @@ export const App: React.FC = () => {
                   }))
                 }
               />
-              <span>Locator map</span>
+              <span>Range &amp; Provenance Map</span>
             </label>
             <label className="checkbox-row">
               <input
@@ -548,7 +1162,7 @@ export const App: React.FC = () => {
                   }))
                 }
               />
-              <span>Transparent BG</span>
+              <span>Transparent Background</span>
             </label>
           </div>
         </section>
@@ -570,7 +1184,7 @@ export const App: React.FC = () => {
                 aria-hidden="true"
               />
               <span className="device-experience-text">
-                For the fullest experience, we recommend visiting on a desktop or tablet.
+                For archival 4K vector fidelity and multi-ribbon cellular inspection, a desktop or large-format display is recommended.
               </span>
             </div>
             <button
@@ -591,43 +1205,104 @@ export const App: React.FC = () => {
             <div className="brand-title">
               <img
                 src="./favicon.svg"
-                alt=""
+                alt="XYLEM Specimen Mark"
                 width={24}
                 height={24}
-                className="brand-cookie-icon"
+                className="brand-specimen-icon"
               />
-              <h1>DendroSim</h1>
+              <div className="brand-title-group">
+                <h1>XYLEM</h1>
+                <span className="brand-tagline">An Ecological Ledger of Deep Time</span>
+              </div>
             </div>
-            <div
-              className="unit-segmented"
-              role="group"
-              aria-label="Units of measure"
-            >
+            <div className="brand-header-actions">
               <button
                 type="button"
-                className={unitSystem === 'us' ? 'active' : ''}
-                title="US Customary units (in, ft, °F)"
-                onClick={() => setUnitSystem('us')}
+                className="btn-colophon-trigger"
+                onClick={() => setIsColophonOpen(true)}
+                aria-label="Open Colophon and Artist Statement"
+                title="Colophon & Ecological Ledger Statement"
               >
-                US
+                <Info size={13} aria-hidden="true" />
+                <span>Colophon</span>
               </button>
               <button
                 type="button"
-                className={unitSystem === 'metric' ? 'active' : ''}
-                title="Metric units (mm, cm, m, °C)"
-                onClick={() => setUnitSystem('metric')}
+                className="btn-colophon-trigger"
+                onClick={() => setIsTutorialOpen(true)}
+                aria-label="Open Dendrochronology & Wood Anatomy Guide"
+                title="Interactive Dendrochronology & Cross-Section Guide"
               >
-                Metric
+                <BookOpen size={13} aria-hidden="true" />
+                <span>Guide</span>
               </button>
+              <button
+                type="button"
+                className="btn-exhibition-trigger"
+                onClick={toggleExhibitionMode}
+                aria-label="Enter Fullscreen Exhibition Mode (F)"
+                title="Fullscreen Exhibition Mode (Press F)"
+              >
+                <Maximize2 size={13} aria-hidden="true" />
+                <span>Exhibit</span>
+              </button>
+              <div
+                className="unit-segmented"
+                role="group"
+                aria-label="Units of measure"
+              >
+                <button
+                  type="button"
+                  className={unitSystem === 'us' ? 'active' : ''}
+                  title="US Customary units (in, ft, °F)"
+                  onClick={() => setUnitSystem('us')}
+                >
+                  US
+                </button>
+                <button
+                  type="button"
+                  className={unitSystem === 'metric' ? 'active' : ''}
+                  title="Metric units (mm, cm, m, °C)"
+                  onClick={() => setUnitSystem('metric')}
+                >
+                  Metric
+                </button>
+              </div>
             </div>
           </div>
           <p className="brand-subtitle">
-            Reconstruct a tree’s hidden climate diary from any coordinate in the American West.
+            Retrospective Dendrochronology &amp; Biological Climate Memory Across Deep Environmental Time
           </p>
         </header>
 
         {/* Top Telemetry & Export Bar */}
         <header className="top-bar">
+          <div className="top-bar-scenario-quick">
+            <label htmlFor="quick-scenario-select" className="quick-scenario-label">
+              Scenario:
+            </label>
+            <select
+              id="quick-scenario-select"
+              className="quick-scenario-select"
+              value={activePresetId ?? ''}
+              onChange={(e) => {
+                const p = getPresetById(e.target.value);
+                if (p) handleSelectPreset(p);
+              }}
+            >
+              {!activePresetId && (
+                <option value="" disabled hidden>
+                  Custom Specimen
+                </option>
+              )}
+              {RETROSPECTIVE_PRESETS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.eraLabel})
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className="telemetry-strip">
             {simulation ? (
               <>
@@ -733,33 +1408,101 @@ export const App: React.FC = () => {
             )}
           </div>
 
+          <div className="top-bar-palette-quick">
+            <label htmlFor="quick-palette-select" className="quick-palette-label">
+              Palette:
+            </label>
+            <select
+              id="quick-palette-select"
+              className="quick-palette-select"
+              value={selectedPalette}
+              onChange={(e) => setSelectedPalette(e.target.value as PaletteId)}
+            >
+              <option value="aged-wood">Aged Heartwood</option>
+              <option value="charred-subalpine">Charred Sub-Alpine</option>
+              <option value="skeleton-plot">Skeleton Plot</option>
+            </select>
+          </div>
+
           <div className="export-actions">
+            {/* Colophon Border Toggle */}
+            <label
+              className={`colophon-plate-toggle ${includeColophonBorder ? 'active' : ''}`}
+              title="Format export inside an archival museum colophon plate border with specimen metadata"
+            >
+              <input
+                type="checkbox"
+                checked={includeColophonBorder}
+                onChange={(e) => setIncludeColophonBorder(e.target.checked)}
+              />
+              <span>Colophon Plate</span>
+            </label>
+
+            <button
+              type="button"
+              className="btn-secondary btn-share-link"
+              onClick={handleCopyShareLink}
+              title="Copy shareable permalink URL to clipboard"
+            >
+              {copiedShareLink ? <Check size={14} /> : <Share2 size={14} />}
+              <span>{copiedShareLink ? 'Link Copied!' : 'Copy Share Link'}</span>
+            </button>
+
+            <button
+              type="button"
+              className="btn-secondary btn-exhibition-button"
+              onClick={toggleExhibitionMode}
+              title="Enter Fullscreen Exhibition Mode (F)"
+            >
+              <Maximize2 size={14} />
+              <span>Exhibit (F)</span>
+            </button>
+
             <button
               type="button"
               className="btn-secondary"
               onClick={handleCopySvg}
-              disabled={!svgMarkup}
+              disabled={!svgBundle}
             >
-              {copiedSvg ? <Check size={15} /> : <Copy size={15} />}
+              {copiedSvg ? <Check size={14} /> : <Copy size={14} />}
               <span>{copiedSvg ? 'Copied' : 'Copy SVG'}</span>
             </button>
+
             <button
               type="button"
-              className="btn-primary"
-              onClick={handleDownloadSvg}
-              disabled={!svgMarkup}
+              className="btn-secondary btn-export-svg"
+              onClick={handleExportSvg}
+              disabled={!svgBundle}
+              title={includeColophonBorder ? 'Export standalone SVG framed with museum colophon plate' : 'Export standalone vector SVG'}
             >
-              <Download size={15} />
-              <span>Export .SVG</span>
+              <Download size={14} />
+              <span>{includeColophonBorder ? 'Export Plate SVG' : 'Export SVG'}</span>
+            </button>
+
+            <button
+              type="button"
+              className="btn-primary btn-export-png"
+              onClick={handleExport4kPng}
+              disabled={!svgBundle || isExportingPng}
+              title="Render high-resolution uncompressed 4K (300 DPI) print raster"
+            >
+              <Download size={14} />
+              <span>
+                {isExportingPng
+                  ? 'Rendering 4K…'
+                  : includeColophonBorder
+                  ? 'Export 4K Plate (300 DPI)'
+                  : 'Export 4K PNG (300 DPI)'}
+              </span>
             </button>
           </div>
         </header>
 
         {/* Environmental Summary Narrative Card */}
-        {simulation && envNarrative && (
+        {simulation && envNarrative && !isExhibitionMode && (
           <div className="environmental-story-card">
             <div className="story-header-row">
-              <span className="story-tag">Site Climate Diary</span>
+              <span className="story-tag">Dendroclimatic Ledger</span>
               <span className="story-coords">
                 {latitude.toFixed(4)}°N, {Math.abs(longitude).toFixed(4)}°W
               </span>
@@ -770,6 +1513,7 @@ export const App: React.FC = () => {
 
         {/* Ecological Viability Banner if Marginal or Unsuitable */}
         {simulation &&
+          !isExhibitionMode &&
           (simulation.viability.stressLevel === 'unsuitable' ||
             simulation.viability.stressLevel === 'marginal') && (
             <div
@@ -784,10 +1528,10 @@ export const App: React.FC = () => {
           )}
 
         {/* Interactive SVG Canvas */}
-        <div className="canvas-area">
+        <div className="canvas-area" style={{ touchAction: 'none' }}>
           {loadingEnv && (
-            <div className="Updating-pill">
-              Loading historical weather &amp; terrain…
+            <div className="updating-pill">
+              Reconstructing paleoclimatic record…
             </div>
           )}
           {simulation && svgBundle && (
@@ -799,12 +1543,35 @@ export const App: React.FC = () => {
               hoveredRing={hoveredRing}
               unitSystem={unitSystem}
               onHoverRing={setHoveredRing}
+              isExhibitionMode={isExhibitionMode}
+              ambientDriftEnabled={ambientDriftEnabled}
             />
           )}
         </div>
 
+        {/* Dual-Mode Time Navigation & Playback Scrubber */}
+        {simulation && !isExhibitionMode && (
+          <TimeNavigation
+            mode={navMode}
+            onModeChange={setNavMode}
+            totalRings={simulation.visibleRingCount}
+            activeRingIndex={effectiveMaxRenderedRing ?? simulation.visibleRingCount}
+            onRingChange={(idx) => {
+              setIsPlaying(false);
+              setActiveRingIndex(idx);
+            }}
+            firstYear={simulation.firstRingYear}
+            deathYear={effectiveDeathYear}
+            isPlaying={isPlaying}
+            onTogglePlay={() => setIsPlaying((p) => !p)}
+            playbackSpeed={playbackSpeed}
+            onSpeedChange={setPlaybackSpeed}
+            activeRecord={ringsByIndex.get(effectiveMaxRenderedRing ?? simulation.visibleRingCount)}
+          />
+        )}
+
         {/* Bottom Chronology Bar Strip */}
-        {simulation && (
+        {simulation && !isExhibitionMode && (
           <RingChronologyChart
             records={ringRecords}
             hoveredRing={hoveredRing}
@@ -814,7 +1581,96 @@ export const App: React.FC = () => {
             onHoverRing={setHoveredRing}
           />
         )}
+
+        {/* Fullscreen Exhibition Floating Minimal Controls Pill */}
+        {isExhibitionMode && simulation && (
+          <div
+            className={`floating-exhibition-bar ${controlsVisible ? 'visible' : 'hidden'}`}
+            onMouseEnter={() => setControlsVisible(true)}
+          >
+            <TimeNavigation
+              mode={navMode}
+              onModeChange={setNavMode}
+              totalRings={simulation.visibleRingCount}
+              activeRingIndex={effectiveMaxRenderedRing ?? simulation.visibleRingCount}
+              onRingChange={(idx) => {
+                setIsPlaying(false);
+                setActiveRingIndex(idx);
+              }}
+              firstYear={simulation.firstRingYear}
+              deathYear={effectiveDeathYear}
+              isPlaying={isPlaying}
+              onTogglePlay={() => setIsPlaying((p) => !p)}
+              playbackSpeed={playbackSpeed}
+              onSpeedChange={setPlaybackSpeed}
+              activeRecord={ringsByIndex.get(effectiveMaxRenderedRing ?? simulation.visibleRingCount)}
+              className="exhibition-compact-nav"
+            />
+            <div className="exhibition-bar-actions">
+              <button
+                type="button"
+                className={`btn-exhibition-pill ${ambientDriftEnabled ? 'active' : ''}`}
+                onClick={() => setAmbientDriftEnabled((a) => !a)}
+                title={ambientDriftEnabled ? 'Pause ambient camera drift' : 'Resume ambient camera drift'}
+              >
+                <Activity size={13} />
+                <span>{ambientDriftEnabled ? 'Drift: On' : 'Drift: Off'}</span>
+              </button>
+              <button
+                type="button"
+                className="btn-exhibition-pill"
+                onClick={() => {
+                  const list: PaletteId[] = ['aged-wood', 'charred-subalpine', 'skeleton-plot'];
+                  const nextIdx = (list.indexOf(selectedPalette) + 1) % list.length;
+                  setSelectedPalette(list[nextIdx]);
+                }}
+                title="Cycle color profile"
+              >
+                <Sparkles size={13} />
+                <span>
+                  {selectedPalette === 'aged-wood'
+                    ? 'Aged Wood'
+                    : selectedPalette === 'charred-subalpine'
+                    ? 'Charred'
+                    : 'Skeleton'}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="btn-exhibition-pill btn-exit-exhibition"
+                onClick={toggleExhibitionMode}
+                title="Exit Fullscreen Exhibition (Esc / F)"
+              >
+                <Minimize2 size={13} />
+                <span>Exit (Esc)</span>
+              </button>
+            </div>
+          </div>
+        )}
       </main>
+
+      <ColophonModal
+        isOpen={isColophonOpen}
+        onClose={() => setIsColophonOpen(false)}
+      />
+
+      <DendroTutorialModal
+        isOpen={isTutorialOpen}
+        onClose={() => setIsTutorialOpen(false)}
+        onSelectPreset={(id) => {
+          const preset = getPresetById(id);
+          if (preset) handleSelectPreset(preset);
+        }}
+        onSelectPalette={setSelectedPalette}
+        onSetTimeNavMode={setNavMode}
+      />
+
+      {exportToastNotice && (
+        <div className="export-toast-notice" role="status" aria-live="polite">
+          <Check size={14} />
+          <span>{exportToastNotice}</span>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,5 +1,14 @@
 import { buildAnatomicalBarkGeometry } from './barkModel';
 import {
+  calculateMorkDensity,
+  computeDensityGradientParams,
+  computeDensityRibbonFractions,
+  computeFireScarGeometry,
+  computeLocallyAbsentAttenuation,
+  generateResinPocketGeometry,
+} from './biologicalDisturbances';
+import { isPresetActive, RETROSPECTIVE_PRESETS } from './presets';
+import {
   buildCanonicalSeedKey,
   hashToHex,
   Noise2D,
@@ -9,7 +18,9 @@ import { SPECIES_PROFILES, SpeciesProfile } from './species';
 import {
   AnnualRingRecord,
   EnvironmentDataset,
+  type FireScarGeometry,
   PolarRingGeometry,
+  type ResinPocketGeometry,
   SimulationParams,
   TreeSimulationResult,
   ViabilityAssessment,
@@ -162,6 +173,15 @@ export function simulateTreeCrossSection(
   const rngBark = masterRng.fork('bark');
 
   const viability = assessViability(profile, env);
+
+  // Active disturbance configuration (explicit params take precedence, fallback to matching preset)
+  let disturbanceConfig = params.disturbance;
+  if (!disturbanceConfig) {
+    const matched = RETROSPECTIVE_PRESETS.find((p) => isPresetActive(p, params));
+    if (matched?.disturbance) {
+      disturbanceConfig = matched.disturbance;
+    }
+  }
 
   // Photoperiod vector for site latitude
   const gE = computeMonthlyPhotoperiod(params.latitude);
@@ -321,11 +341,26 @@ export function simulateTreeCrossSection(
   const ringRecords: AnnualRingRecord[] = [];
   const metricsByYear = new Map(treeLifeMetrics.map((m) => [m.year, m]));
 
+  const fallbackMetrics: YearlyGrowthMetrics = {
+    year: params.deathYear,
+    annualG: 1.0,
+    springG: 0.4,
+    summerG: 0.3,
+    summerMoistureG: 0.5,
+    juneMoistureG: 0.5,
+    summerTempC: 18.0,
+    monsoonPulseRatio: 1.0,
+    tempStressSum: 0,
+    moistStressSum: 0,
+    isSynthetic: true,
+  };
+
   for (let k = 1; k <= visibleRingCount; k++) {
     const calendarYear = firstRingYear + k - 1;
     const ym =
       metricsByYear.get(calendarYear) ??
-      treeLifeMetrics[treeLifeMetrics.length - 1];
+      treeLifeMetrics[treeLifeMetrics.length - 1] ??
+      fallbackMetrics;
 
     // Normalized climate index relative to site mean, with species drought sensitivity
     const rawRel = meanAnnualG > 0.05 ? ym.annualG / meanAnnualG : 0.5;
@@ -468,6 +503,63 @@ export function simulateTreeCrossSection(
     currentMeanRadiusMm += meanWidthMm;
   }
 
+  // Calculate RWI and continuous density gradient parameters across all ring records
+  const meanAllWidths =
+    ringRecords.reduce((sum, r) => sum + r.meanWidthMm, 0) /
+    Math.max(1, ringRecords.length);
+
+  for (const rec of ringRecords) {
+    rec.relativeWidthIndex = Number(
+      (rec.meanWidthMm / meanAllWidths).toFixed(3)
+    );
+    const densityParams = computeDensityGradientParams(
+      params.species,
+      rec.latewoodFraction
+    );
+    rec.densityGradient = densityParams;
+
+    const { uTrans1, uTrans2 } = computeDensityRibbonFractions(
+      params.species,
+      rec.latewoodFraction
+    );
+    const rho1 = calculateMorkDensity(uTrans1, densityParams);
+    const rho2 = calculateMorkDensity(uTrans2, densityParams);
+    const graySpan = rec.earlywoodGray - rec.latewoodGray;
+    const trans1Gray = Math.round(
+      rec.earlywoodGray -
+        graySpan *
+          ((rho1 - densityParams.densityEw) /
+            (densityParams.densityLw - densityParams.densityEw))
+    );
+    const trans2Gray = Math.round(
+      rec.earlywoodGray -
+        graySpan *
+          ((rho2 - densityParams.densityEw) /
+            (densityParams.densityLw - densityParams.densityEw))
+    );
+    rec.transition1Gray = Math.max(
+      rec.latewoodGray + 6,
+      Math.min(rec.earlywoodGray - 6, trans1Gray)
+    );
+    rec.transition2Gray = Math.max(
+      rec.latewoodGray + 2,
+      Math.min(rec.transition1Gray - 2, trans2Gray)
+    );
+
+    const isDroughtAbsent =
+      (disturbanceConfig?.droughtThresholdRwi !== undefined &&
+        rec.relativeWidthIndex < disturbanceConfig.droughtThresholdRwi) ||
+      (disturbanceConfig?.enableLocallyAbsent && rec.climateIndex < 0.28);
+
+    if (isDroughtAbsent) {
+      rec.isLocallyAbsent = true;
+    }
+
+    if (disturbanceConfig?.fireScarYear === rec.calendarYear) {
+      rec.hasFireScar = true;
+    }
+  }
+
   // Step 2: Build 2D Polar Cross-Section Geometry around eccentric pith
   const numAngles = 300;
   const anglesRad: number[] = [];
@@ -534,6 +626,15 @@ export function simulateTreeCrossSection(
   const polarRings: PolarRingGeometry[] = [];
   let cumRadiusApprox = pithRadiusMm;
 
+  let pithOffsetX = 0;
+  let pithOffsetY = 0;
+  const deltaPithFactor = 0.28;
+  const fireScarsList: FireScarGeometry[] = [];
+  const resinPocketsList: ResinPocketGeometry[] = [];
+  let fireScarPreRadii: number[] | null = null;
+  let fireScarActiveUphillRad = 0;
+  let fireScarActiveArcRad = 0;
+
   for (let idx = 0; idx < ringRecords.length; idx++) {
     const rec = ringRecords[idx];
     cumRadiusApprox += rec.meanWidthMm;
@@ -546,6 +647,8 @@ export function simulateTreeCrossSection(
     );
 
     const innerRadiusMm = prevOuterRadii.slice();
+    const transition1RadiusMm: number[] = [];
+    const transition2RadiusMm: number[] = [];
     const ewBoundaryRadiusMm: number[] = [];
     const lwInnerRadiusMm: number[] = [];
     const outerRadiusMm: number[] = [];
@@ -553,16 +656,47 @@ export function simulateTreeCrossSection(
       ? []
       : undefined;
 
+    // Initialize absentArc if locally absent
+    if (rec.isLocallyAbsent && !rec.absentArc) {
+      const absentMid =
+        ((leanScreenRad + Math.PI) % (2 * Math.PI) + 2 * Math.PI) %
+        (2 * Math.PI);
+      rec.absentArc = {
+        startAngleRad: absentMid - 0.45,
+        endAngleRad: absentMid + 0.45,
+      };
+    }
+
     // Slight inter-annual wander in lean direction (wind storms / canopy shifts)
     const yearLeanAngle =
       leanScreenRad + 0.14 * Math.sin(idx * 0.19 + ellipseAxisRad);
 
+    // Cumulative pith migration vector shift
+    const annualPithShiftX =
+      deltaPithFactor *
+      compressionStrength *
+      Math.cos(yearLeanAngle) *
+      rec.meanWidthMm;
+    const annualPithShiftY =
+      deltaPithFactor *
+      compressionStrength *
+      Math.sin(yearLeanAngle) *
+      rec.meanWidthMm;
+    pithOffsetX += annualPithShiftX;
+    pithOffsetY += annualPithShiftY;
+
     for (let j = 0; j < numAngles; j++) {
       const theta = anglesRad[j];
 
-      // 1. Conifer compression wood modulation (wider on lean side)
+      // 1. Conifer compression wood dual harmonics (wider on lean side)
+      // Normalized harmonic reaction wood parameter C_k
+      const cK = compressionStrength / 1.85;
       const cosLean = Math.cos(theta - yearLeanAngle);
-      const compMod = 1 + compressionStrength * cosLean;
+      const cos2Lean = Math.cos(2 * (theta - yearLeanAngle));
+      const compMod =
+        1 +
+        1.85 * cK * cosLean +
+        0.45 * cK * cK * cos2Lean;
 
       // 2. Progressive basal root-buttress flutes
       let lobeSum = 0;
@@ -586,10 +720,35 @@ export function simulateTreeCrossSection(
             3
           );
 
-      const localWidth = Math.max(
-        0.08,
-        rec.meanWidthMm * compMod * fluteMod * ellMod * grainMod
-      );
+      const nominalWidth =
+        rec.meanWidthMm * compMod * fluteMod * ellMod * grainMod;
+      let localWidth: number;
+
+      if (rec.isLocallyAbsent && rec.absentArc) {
+        const centerAbsent =
+          rec.absentArc.startAngleRad +
+          (rec.absentArc.endAngleRad - rec.absentArc.startAngleRad) / 2;
+        const cambiumFactor = computeLocallyAbsentAttenuation(
+          theta,
+          centerAbsent,
+          0.45,
+          0.35
+        );
+        localWidth = Math.max(0, nominalWidth * cambiumFactor);
+      } else {
+        localWidth = Math.max(0.08, nominalWidth);
+      }
+
+      // If fire occurred, in subsequent years inside the dead catface sector, expansion is zero
+      if (fireScarPreRadii && fireScarActiveArcRad > 0) {
+        const dUphill = Math.abs(angularDiff(theta, fireScarActiveUphillRad));
+        const yearsPostFire = rec.calendarYear - (disturbanceConfig?.fireScarYear ?? 0);
+        const decayFactor = 0.30 + 0.70 * Math.exp(-0.045 * Math.max(0, yearsPostFire));
+        const activeCatfaceHalfArc = (fireScarActiveArcRad * decayFactor) / 2;
+        if (dUphill <= activeCatfaceHalfArc) {
+          localWidth = 0;
+        }
+      }
 
       // Compression wood also increases local latewood proportion on the downhill/lean side
       const compLwBoost =
@@ -600,23 +759,26 @@ export function simulateTreeCrossSection(
         0.62
       );
 
+      const { uTrans1, uTrans2, uLwInner } = computeDensityRibbonFractions(
+        profile.id,
+        localLwFrac
+      );
+
       const r0 = innerRadiusMm[j];
+      const rTrans1 = r0 + localWidth * uTrans1;
+      const rTrans2 = r0 + localWidth * uTrans2;
+      const rLwInner = r0 + localWidth * uLwInner;
       const rOuter = r0 + localWidth;
-      const lwStartFrac = 1 - localLwFrac;
 
-      // For semi-gradual species (Ponderosa), create a soft transition band before crisp latewood
-      const transWidthFrac =
-        profile.ewLwTransition === 'semi-gradual'
-          ? Math.min(0.22, lwStartFrac * 0.32)
-          : Math.min(0.06, lwStartFrac * 0.1);
-
-      ewBoundaryRadiusMm.push(r0 + localWidth * (lwStartFrac - transWidthFrac));
-      lwInnerRadiusMm.push(r0 + localWidth * lwStartFrac);
+      transition1RadiusMm.push(rTrans1);
+      transition2RadiusMm.push(rTrans2);
+      ewBoundaryRadiusMm.push(rTrans1);
+      lwInnerRadiusMm.push(rLwInner);
       outerRadiusMm.push(rOuter);
 
       if (falseRingRadiusMm) {
         falseRingRadiusMm.push(
-          r0 + localWidth * lwStartFrac * rec.falseRingPosition
+          r0 + localWidth * uLwInner * rec.falseRingPosition
         );
       }
     }
@@ -624,11 +786,75 @@ export function simulateTreeCrossSection(
     polarRings.push({
       record: rec,
       innerRadiusMm,
+      transition1RadiusMm,
+      transition2RadiusMm,
       ewBoundaryRadiusMm,
       lwInnerRadiusMm,
       outerRadiusMm,
       falseRingRadiusMm,
     });
+
+    // Capture fire scar geometry on the fire year
+    if (rec.hasFireScar && !fireScarPreRadii) {
+      fireScarPreRadii = outerRadiusMm.slice();
+      const uphillCompass = (env.terrain.aspectDeg + 180) % 360;
+      fireScarActiveUphillRad =
+        disturbanceConfig?.fireScarAzimuthRad ??
+        compassToScreenRad(uphillCompass);
+      fireScarActiveArcRad = disturbanceConfig?.fireScarArcRad ?? 0.85;
+
+      const sampleIdx =
+        Math.floor(
+          (((fireScarActiveUphillRad % (2 * Math.PI)) + 2 * Math.PI) %
+            (2 * Math.PI) /
+            (2 * Math.PI)) *
+            numAngles
+        ) % numAngles;
+      const preRadiusAtUphill = fireScarPreRadii[sampleIdx];
+
+      const scarGeom = computeFireScarGeometry(
+        rec.calendarYear,
+        params.deathYear,
+        preRadiusAtUphill,
+        fireScarActiveUphillRad,
+        fireScarActiveArcRad
+      );
+      fireScarsList.push(scarGeom);
+
+      // Traumatic resin pockets walled off in subsequent xylem
+      if (idx + 1 < ringRecords.length) {
+        const resin1 = generateResinPocketGeometry(
+          idx + 1,
+          preRadiusAtUphill + 1.2,
+          rec.meanWidthMm,
+          fireScarActiveUphillRad - fireScarActiveArcRad / 2 - 0.08,
+          rngAnatomy
+        );
+        const resin2 = generateResinPocketGeometry(
+          idx + 1,
+          preRadiusAtUphill + 1.4,
+          rec.meanWidthMm,
+          fireScarActiveUphillRad + fireScarActiveArcRad / 2 + 0.08,
+          rngAnatomy
+        );
+        resinPocketsList.push(resin1, resin2);
+      }
+    }
+
+    if (
+      disturbanceConfig?.enableResinPockets &&
+      resinPocketsList.length === 0 &&
+      idx >= 15
+    ) {
+      const resin1 = generateResinPocketGeometry(
+        idx,
+        cumRadiusApprox,
+        rec.meanWidthMm,
+        leanScreenRad + 0.5,
+        rngAnatomy
+      );
+      resinPocketsList.push(resin1);
+    }
 
     prevOuterRadii = outerRadiusMm;
   }
@@ -651,6 +877,14 @@ export function simulateTreeCrossSection(
   const diameterOutsideBarkMm =
     diameterInsideBarkMm + bark.meanThicknessMm * 2;
 
+  const driftDistance = Math.hypot(pithOffsetX, pithOffsetY);
+  const eccentricity = clamp(
+    driftDistance / Math.max(1, meanFinalWoodRadiusMm) +
+      compressionStrength * 0.75,
+    0.05,
+    0.60
+  );
+
   return {
     params,
     seedKey,
@@ -662,6 +896,11 @@ export function simulateTreeCrossSection(
     visibleRingCount,
     anglesRad,
     pithRadiusMm,
+    pithOffsetMm: {
+      x: Number(pithOffsetX.toFixed(3)),
+      y: Number(pithOffsetY.toFixed(3)),
+    },
+    eccentricity: Number(eccentricity.toFixed(3)),
     leanAzimuthDeg,
     compressionStrength,
     diameterInsideBarkMm,
@@ -670,5 +909,7 @@ export function simulateTreeCrossSection(
     bark,
     environment: env,
     viability,
+    fireScars: fireScarsList.length > 0 ? fireScarsList : undefined,
+    resinPockets: resinPocketsList.length > 0 ? resinPocketsList : undefined,
   };
 }

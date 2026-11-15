@@ -63,6 +63,55 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
     ? landmarksByYear.get(activeHoveredRecord.calendarYear)
     : null;
 
+  const barsContainerRef = React.useRef<HTMLDivElement | null>(null);
+  const isPointerScrubbingRef = React.useRef(false);
+
+  const handlePointerScrub = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const el = barsContainerRef.current;
+      if (!el || records.length === 0) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const clientX = e.clientX;
+      const fraction = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const targetIndex = Math.min(records.length - 1, Math.floor(fraction * records.length));
+      onHoverRing(records[targetIndex].ringIndex);
+    },
+    [records, onHoverRing]
+  );
+
+  const handlePointerDown = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      isPointerScrubbingRef.current = true;
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {}
+      handlePointerScrub(e);
+    },
+    [handlePointerScrub]
+  );
+
+  const handlePointerMove = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (isPointerScrubbingRef.current) {
+        handlePointerScrub(e);
+      }
+    },
+    [handlePointerScrub]
+  );
+
+  const handlePointerUp = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      isPointerScrubbingRef.current = false;
+      try {
+        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        }
+      } catch {}
+    },
+    []
+  );
+
   return (
     <div className="chronology-panel">
       <div className="chronology-header">
@@ -109,8 +158,19 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
       )}
 
       <div
+        ref={barsContainerRef}
         className="chronology-bars"
-        onMouseLeave={() => onHoverRing(null)}
+        style={{ touchAction: 'none' }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onLostPointerCapture={handlePointerUp}
+        onMouseLeave={() => {
+          if (!isPointerScrubbingRef.current) {
+            onHoverRing(null);
+          }
+        }}
       >
         {records.map((rec) => {
           const heightPct = Math.max(4, (rec.meanWidthMm / maxWidth) * 100);

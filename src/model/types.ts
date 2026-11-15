@@ -1,4 +1,38 @@
-export type SpeciesId = 'douglas-fir' | 'ponderosa-pine';
+export type SpeciesId = 'douglas-fir' | 'ponderosa-pine' | 'bristlecone-pine';
+
+export interface DisturbanceConfig {
+  droughtThresholdRwi?: number; // e.g. 0.40
+  frostEventYears?: number[];    // e.g. [1783, 1816]
+  fireScarYear?: number;        // e.g. 1910
+  fireScarAzimuthRad?: number;
+  fireScarArcRad?: number;
+  enableLocallyAbsent?: boolean;
+  enableResinPockets?: boolean;
+}
+
+export interface FireScarGeometry {
+  year: number;
+  catfaceArcStartRad: number;
+  catfaceArcEndRad: number;
+  exposedWoodRadiusMm: number;
+  callusMarginCoordinates: Array<{ x: number; y: number; curlRadiusMm: number }>;
+}
+
+export interface ResinPocketGeometry {
+  ringIndex: number;
+  centerAngleRad: number;
+  arcLengthRad: number;
+  radialDepthMm: number;
+  pathD: string;
+}
+
+export interface DensityGradientParams {
+  tauCrit: number;
+  sigmaTrans: number;
+  gamma: number;
+  densityEw: number;
+  densityLw: number;
+}
 
 export interface SimulationParams {
   species: SpeciesId;
@@ -6,6 +40,7 @@ export interface SimulationParams {
   longitude: number;
   totalAge: number;
   deathYear: number;
+  disturbance?: DisturbanceConfig;
 }
 
 export interface TerrainInfo {
@@ -53,12 +88,24 @@ export interface AnnualRingRecord {
   latewoodGray: number; // 0..255
   isHeartwood: boolean;
   isSyntheticClimate: boolean;
+  // Milestone 2 Biological additions:
+  relativeWidthIndex?: number;
+  isLocallyAbsent?: boolean;
+  absentArc?: { startAngleRad: number; endAngleRad: number };
+  hasFireScar?: boolean;
+  transition1Gray?: number;
+  transition2Gray?: number;
+  densityGradient?: DensityGradientParams;
 }
 
 export interface PolarRingGeometry {
   record: AnnualRingRecord;
   /** Inner boundary radius in mm at each angular sample */
   innerRadiusMm: number[];
+  /** Intermediate gradient transition 1 radius in mm */
+  transition1RadiusMm?: number[];
+  /** Intermediate gradient transition 2 radius in mm */
+  transition2RadiusMm?: number[];
   /** Boundary between earlywood and transition/latewood in mm */
   ewBoundaryRadiusMm: number[];
   /** Optional transition-to-latewood inner edge for gradual species */
@@ -67,6 +114,8 @@ export interface PolarRingGeometry {
   outerRadiusMm: number[];
   /** Optional false ring band center radius in mm */
   falseRingRadiusMm?: number[];
+  /** Optional locally absent mask across angles (0 = dead/absent, 1 = normal) */
+  locallyAbsentMask?: number[];
 }
 
 export interface PolarPoint {
@@ -121,6 +170,10 @@ export interface TreeSimulationResult {
   visibleRingCount: number;
   anglesRad: number[];
   pithRadiusMm: number;
+  /** Cumulative offset of pith from outer cambium geometric center */
+  pithOffsetMm: { x: number; y: number };
+  /** Biological stem cross-section eccentricity in [0..1] */
+  eccentricity: number;
   /** Direction (radians, math angle or compass) of maximum compression wood */
   leanAzimuthDeg: number;
   compressionStrength: number;
@@ -130,4 +183,6 @@ export interface TreeSimulationResult {
   bark: BarkGeometry;
   environment: EnvironmentDataset;
   viability: ViabilityAssessment;
+  fireScars?: FireScarGeometry[];
+  resinPockets?: ResinPocketGeometry[];
 }

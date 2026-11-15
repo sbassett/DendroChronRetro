@@ -336,7 +336,7 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
     });
     expect(svgWithMap).toContain('id="locator-map"');
     expect(svgWithMap).toContain('data-species-range="douglas-fir"');
-    expect(svgWithMap).toContain('id="locator-cookie-pin"');
+    expect(svgWithMap).toContain('id="locator-specimen-pin"');
     expect(svgWithMap).not.toContain('N. AMERICA');
     expect(svgWithMap).not.toContain('locator-map-clip');
 

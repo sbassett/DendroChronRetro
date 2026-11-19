@@ -8,9 +8,9 @@ import {
 } from '../src/model/svgGenerator';
 import { EnvironmentDataset } from '../src/model/types';
 
-function createMinimalEnv(): EnvironmentDataset {
+function createMinimalEnv(startYear = 1990, endYear = 2025): EnvironmentDataset {
   const years = [];
-  for (let y = 1990; y <= 2025; y++) {
+  for (let y = startYear; y <= endYear; y++) {
     years.push({
       year: y,
       tempC: new Array(12).fill(9.5),
@@ -136,5 +136,71 @@ describe('Minimalist Full-Window Interface Contracts', () => {
     expect(appCss).toContain('var(--canvas-bg');
     expect(appCss).not.toContain('#121212');
     expect(appCss).not.toContain('device-experience-banner');
+  });
+
+  it('shrinks and regrows chronological span cleanly without clamping activeRingIndex down', () => {
+    const appTsx = fs.readFileSync(path.resolve(cwd, 'src/App.tsx'), 'utf-8');
+    expect(appTsx).not.toContain('setActiveRingIndex(simulation.visibleRingCount)');
+    expect(appTsx).toMatch(/handleAgeChange[\s\S]*setActiveRingIndex\(null\)/);
+    expect(appTsx).toContain('maxRenderedRingIndex: isPeeled ? effectiveMaxRenderedRing : undefined');
+
+    const env = createMinimalEnv(1760, 2026);
+    const sim250 = simulateTreeCrossSection(
+      {
+        species: 'ponderosa-pine',
+        latitude: 35.2645,
+        longitude: -111.7442,
+        totalAge: 250,
+        deathYear: 2026,
+      },
+      env
+    );
+    const sim40 = simulateTreeCrossSection(
+      {
+        species: 'ponderosa-pine',
+        latitude: 35.2645,
+        longitude: -111.7442,
+        totalAge: 40,
+        deathYear: 2026,
+      },
+      env
+    );
+    const simRegrown250 = simulateTreeCrossSection(
+      {
+        species: 'ponderosa-pine',
+        latitude: 35.2645,
+        longitude: -111.7442,
+        totalAge: 250,
+        deathYear: 2026,
+      },
+      env
+    );
+
+    expect(sim40.visibleRingCount).toBeLessThan(sim250.visibleRingCount);
+    expect(simRegrown250.visibleRingCount).toBe(sim250.visibleRingCount);
+
+    const bundle40 = generateCrossSectionSvgBundle(sim40, {
+      showBark: true,
+      showMedullaryRays: true,
+      showAnnotations: true,
+      showLocatorMap: false,
+      showCaptionText: false,
+      transparentBackground: false,
+      maxRenderedRingIndex: undefined,
+    });
+    const bundleRegrown = generateCrossSectionSvgBundle(simRegrown250, {
+      showBark: true,
+      showMedullaryRays: true,
+      showAnnotations: true,
+      showLocatorMap: false,
+      showCaptionText: false,
+      transparentBackground: false,
+      maxRenderedRingIndex: undefined,
+    });
+
+    expect(bundle40.innerMarkup).toContain('id="bark-layer"');
+    expect(bundle40.innerMarkup).not.toContain(`data-ring="${sim250.visibleRingCount}"`);
+    expect(bundleRegrown.innerMarkup).toContain('id="bark-layer"');
+    expect(bundleRegrown.innerMarkup).toContain(`data-ring="${simRegrown250.visibleRingCount}"`);
   });
 });

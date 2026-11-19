@@ -253,22 +253,34 @@ export const App: React.FC = () => {
     setLatInput(lat.toFixed(5));
     setLonInput(lon.toFixed(5));
     setHoveredRing(null);
+    setActiveRingIndex(null);
+    setIsPlaying(false);
   }, []);
 
   const commitCoordInputs = useCallback(() => {
     const parsedLat = parseCoordinateInput(latInput, 'lat');
     const parsedLon = parseCoordinateInput(lonInput, 'lon');
+    let changed = false;
     if (parsedLat !== null) {
-      setLatitude(Number(parsedLat.toFixed(5)));
+      const nextLat = Number(parsedLat.toFixed(5));
+      if (nextLat !== latitude) changed = true;
+      setLatitude(nextLat);
       setLatInput(parsedLat.toFixed(5));
     } else {
       setLatInput(latitude.toFixed(5));
     }
     if (parsedLon !== null) {
-      setLongitude(Number(parsedLon.toFixed(5)));
+      const nextLon = Number(parsedLon.toFixed(5));
+      if (nextLon !== longitude) changed = true;
+      setLongitude(nextLon);
       setLonInput(parsedLon.toFixed(5));
     } else {
       setLonInput(longitude.toFixed(5));
+    }
+    if (changed) {
+      setHoveredRing(null);
+      setActiveRingIndex(null);
+      setIsPlaying(false);
     }
   }, [latInput, lonInput, latitude, longitude]);
 
@@ -336,7 +348,7 @@ export const App: React.FC = () => {
     [simulation]
   );
 
-  // Synchronize activeRingIndex when simulation completes
+  // Synchronize activeRingIndex when simulation completes (`null` = full mature specimen + bark)
   useEffect(() => {
     if (!simulation) return;
     if (targetPermalinkYearRef.current !== null) {
@@ -345,7 +357,11 @@ export const App: React.FC = () => {
         (r) => r.record.calendarYear === targetYear
       );
       if (target) {
-        setActiveRingIndex(target.record.ringIndex);
+        setActiveRingIndex(
+          target.record.ringIndex >= simulation.visibleRingCount
+            ? null
+            : target.record.ringIndex
+        );
       }
       targetPermalinkYearRef.current = null;
       if (target) {
@@ -353,10 +369,10 @@ export const App: React.FC = () => {
       }
     }
     if (
-      activeRingIndex === null ||
-      activeRingIndex > simulation.visibleRingCount
+      activeRingIndex !== null &&
+      activeRingIndex >= simulation.visibleRingCount
     ) {
-      setActiveRingIndex(simulation.visibleRingCount);
+      setActiveRingIndex(null);
     }
   }, [simulation, activeRingIndex]);
 
@@ -371,13 +387,15 @@ export const App: React.FC = () => {
   // Live viewport SVG omits duplicate embedded locator map & text caption so the cross section centers cleanly
   const svgBundle = useMemo(() => {
     if (!simulation) return null;
+    const isPeeled = activeRingIndex !== null;
     return generateCrossSectionSvgBundle(simulation, {
       ...renderOptions,
       showLocatorMap: false,
       showCaptionText: false,
       unitSystem,
-      highlightedRingIndex: hoveredRing ?? (isPlaying ? null : effectiveMaxRenderedRing),
-      maxRenderedRingIndex: effectiveMaxRenderedRing,
+      highlightedRingIndex:
+        hoveredRing ?? (!isPlaying && isPeeled ? effectiveMaxRenderedRing : null),
+      maxRenderedRingIndex: isPeeled ? effectiveMaxRenderedRing : undefined,
       paletteId: selectedPalette,
       enableWoodGrain: enableWoodGrain,
     });
@@ -387,6 +405,7 @@ export const App: React.FC = () => {
     unitSystem,
     hoveredRing,
     isPlaying,
+    activeRingIndex,
     effectiveMaxRenderedRing,
     selectedPalette,
     enableWoodGrain,
@@ -401,7 +420,8 @@ export const App: React.FC = () => {
       showCaptionText: true,
       unitSystem,
       highlightedRingIndex: null,
-      maxRenderedRingIndex: effectiveMaxRenderedRing,
+      maxRenderedRingIndex:
+        activeRingIndex !== null ? effectiveMaxRenderedRing : undefined,
       paletteId: selectedPalette,
       enableWoodGrain: enableWoodGrain,
     });
@@ -409,6 +429,7 @@ export const App: React.FC = () => {
     simulation,
     renderOptions,
     unitSystem,
+    activeRingIndex,
     effectiveMaxRenderedRing,
     selectedPalette,
     enableWoodGrain,
@@ -760,6 +781,18 @@ export const App: React.FC = () => {
     buildPermalinkUrl,
   ]);
 
+  const handleTimelineRingChange = useCallback(
+    (idx: number) => {
+      setIsPlaying(false);
+      if (simulation && idx >= simulation.visibleRingCount) {
+        setActiveRingIndex(null);
+      } else {
+        setActiveRingIndex(idx);
+      }
+    },
+    [simulation]
+  );
+
   const handleToggleEditor = useCallback(
     (editor: Exclude<ActiveEditorKey, null>) => {
       setActiveEditor((cur) => (cur === editor ? null : editor));
@@ -770,6 +803,9 @@ export const App: React.FC = () => {
   const handleSelectSpecies = useCallback((sp: SpeciesId) => {
     setSpecies(sp);
     setActivePresetId(null);
+    setHoveredRing(null);
+    setActiveRingIndex(null);
+    setIsPlaying(false);
   }, []);
 
   const handleLatInputChange = useCallback((val: string) => {
@@ -802,16 +838,25 @@ export const App: React.FC = () => {
   const handleAgeChange = useCallback((age: number) => {
     setTotalAge(age);
     setActivePresetId(null);
+    setHoveredRing(null);
+    setActiveRingIndex(null);
+    setIsPlaying(false);
   }, []);
 
   const handleToggleOverrideDeath = useCallback((checked: boolean) => {
     setOverrideDeathYear(checked);
     setActivePresetId(null);
+    setHoveredRing(null);
+    setActiveRingIndex(null);
+    setIsPlaying(false);
   }, []);
 
   const handleCustomDeathYearChange = useCallback((year: number) => {
     setCustomDeathYear(year);
     setActivePresetId(null);
+    setHoveredRing(null);
+    setActiveRingIndex(null);
+    setIsPlaying(false);
   }, []);
 
   const desktopBrandHeader = (
@@ -1002,10 +1047,7 @@ export const App: React.FC = () => {
                 activeRingIndex={
                   effectiveMaxRenderedRing ?? simulation.visibleRingCount
                 }
-                onRingChange={(idx) => {
-                  setIsPlaying(false);
-                  setActiveRingIndex(idx);
-                }}
+                onRingChange={handleTimelineRingChange}
                 firstYear={simulation.firstRingYear}
                 deathYear={effectiveDeathYear}
                 isPlaying={isPlaying}
@@ -1113,10 +1155,7 @@ export const App: React.FC = () => {
               activeRingIndex={
                 effectiveMaxRenderedRing ?? simulation?.visibleRingCount ?? 1
               }
-              onRingChange={(idx) => {
-                setIsPlaying(false);
-                setActiveRingIndex(idx);
-              }}
+              onRingChange={handleTimelineRingChange}
               isPlaying={isPlaying}
               onTogglePlay={() => setIsPlaying((p) => !p)}
               playbackSpeed={playbackSpeed}
@@ -1153,10 +1192,7 @@ export const App: React.FC = () => {
               activeRingIndex={
                 effectiveMaxRenderedRing ?? simulation.visibleRingCount
               }
-              onRingChange={(idx) => {
-                setIsPlaying(false);
-                setActiveRingIndex(idx);
-              }}
+              onRingChange={handleTimelineRingChange}
               firstYear={simulation.firstRingYear}
               deathYear={effectiveDeathYear}
               isPlaying={isPlaying}

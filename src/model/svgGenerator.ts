@@ -32,6 +32,7 @@ export interface SvgRenderOptions {
   showMedullaryRays: boolean;
   showAnnotations: boolean;
   showLocatorMap?: boolean;
+  showCaptionText?: boolean;
   transparentBackground: boolean;
   unitSystem?: UnitSystem;
   highlightedRingIndex?: number | null;
@@ -738,6 +739,7 @@ export function generateCrossSectionSvgBundle(
   const showBark = options.showBark;
   const showAnnotations = options.showAnnotations;
   const showLocator = options.showLocatorMap ?? true;
+  const showCaption = options.showCaptionText ?? true;
   const palette = getPalette(options.paletteId ?? options.palette?.id);
   const palMarkup = cache.getPaletteMarkup(palette);
   const enableFilter = Boolean(options.enableWoodGrain ?? options.enableTextureFilter);
@@ -751,7 +753,7 @@ export function generateCrossSectionSvgBundle(
   const effectiveMaxRing = Math.max(1, Math.min(sim.rings.length, rawMax));
 
   // Check bundle memoization cache
-  const cacheKey = `${effectiveMaxRing}:${options.highlightedRingIndex ?? ''}:${showBark}:${Boolean(options.showMedullaryRays)}:${showAnnotations}:${showLocator}:${options.transparentBackground}:${options.unitSystem ?? 'us'}:${palette.id}:${enableFilter ? 'grain' : 'nograin'}`;
+  const cacheKey = `${effectiveMaxRing}:${options.highlightedRingIndex ?? ''}:${showBark}:${Boolean(options.showMedullaryRays)}:${showAnnotations}:${showLocator}:${showCaption}:${options.transparentBackground}:${options.unitSystem ?? 'us'}:${palette.id}:${enableFilter ? 'grain' : 'nograin'}`;
   const cachedBundle = cache.bundleCache.get(cacheKey);
   if (cachedBundle) {
     // Refresh LRU order on cache hit
@@ -900,23 +902,25 @@ export function generateCrossSectionSvgBundle(
         `<text x="${barX.toFixed(2)}" y="${(barY - fontSize * 0.58).toFixed(2)}" font-size="${smallFont.toFixed(2)}" font-weight="600">${scaleLabel}</text>`
     );
 
-    const latLabel = `${Math.abs(sim.params.latitude).toFixed(4)}°${sim.params.latitude >= 0 ? 'N' : 'S'}`;
-    const lonLabel = `${Math.abs(sim.params.longitude).toFixed(4)}°${sim.params.longitude >= 0 ? 'E' : 'W'}`;
-    const stumpLabel = formatStumpHeightShort(sim.stumpHeightM, units);
-    const rightX = vbX + vbW - pad * 0.55;
-    const activeRecord =
-      sim.rings.length > 0 && effectiveMaxRing > 0 && effectiveMaxRing <= sim.rings.length
-        ? sim.rings[effectiveMaxRing - 1].record
-        : null;
-    const extentSubtext =
-      isPeeledInterior && activeRecord
-        ? `Modeled Extent: ${activeRecord.treeAge}y (Ring #${effectiveMaxRing}, ${sim.firstRingYear}–${activeRecord.calendarYear} CE)`
-        : `Chronology Extent: ${sim.params.totalAge}y (${sim.visibleRingCount} Annual Rings, ${sim.firstRingYear}–${sim.params.deathYear} CE)`;
+    if (showCaption) {
+      const latLabel = `${Math.abs(sim.params.latitude).toFixed(4)}°${sim.params.latitude >= 0 ? 'N' : 'S'}`;
+      const lonLabel = `${Math.abs(sim.params.longitude).toFixed(4)}°${sim.params.longitude >= 0 ? 'E' : 'W'}`;
+      const stumpLabel = formatStumpHeightShort(sim.stumpHeightM, units);
+      const rightX = vbX + vbW - pad * 0.55;
+      const activeRecord =
+        sim.rings.length > 0 && effectiveMaxRing > 0 && effectiveMaxRing <= sim.rings.length
+          ? sim.rings[effectiveMaxRing - 1].record
+          : null;
+      const extentSubtext =
+        isPeeledInterior && activeRecord
+          ? `Modeled Extent: ${activeRecord.treeAge}y (Ring #${effectiveMaxRing}, ${sim.firstRingYear}–${activeRecord.calendarYear} CE)`
+          : `Chronology Extent: ${sim.params.totalAge}y (${sim.visibleRingCount} Annual Rings, ${sim.firstRingYear}–${sim.params.deathYear} CE)`;
 
-    elements.push(
-      `<text x="${rightX.toFixed(2)}" y="${(barY - smallFont * 0.95).toFixed(2)}" text-anchor="end" font-size="${smallFont.toFixed(2)}" font-style="italic">${profile.scientificName} (${profile.commonName})</text>` +
-        `<text x="${rightX.toFixed(2)}" y="${(barY + smallFont * 0.35).toFixed(2)}" text-anchor="end" font-size="${(smallFont * 0.88).toFixed(2)}" fill="${palette.annotationColor}" fill-opacity="0.75">${latLabel}, ${lonLabel} · h=${stumpLabel} · ${extentSubtext}</text>`
-    );
+      elements.push(
+        `<text x="${rightX.toFixed(2)}" y="${(barY - smallFont * 0.95).toFixed(2)}" text-anchor="end" font-size="${smallFont.toFixed(2)}" font-style="italic">${profile.scientificName} (${profile.commonName})</text>` +
+          `<text x="${rightX.toFixed(2)}" y="${(barY + smallFont * 0.35).toFixed(2)}" text-anchor="end" font-size="${(smallFont * 0.88).toFixed(2)}" fill="${palette.annotationColor}" fill-opacity="0.75">${latLabel}, ${lonLabel} · h=${stumpLabel} · ${extentSubtext}</text>`
+      );
+    }
 
     const compR = fontSize * 1.45;
     const compX = vbX + vbW - pad * 0.55 - compR;

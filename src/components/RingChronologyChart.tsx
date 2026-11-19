@@ -54,6 +54,20 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
     return map;
   }, [records]);
 
+  const visibleFlagYears = useMemo(() => {
+    const shown = new Set<number>();
+    const minGap = Math.max(12, Math.round((lastYear - firstYear) * 0.14));
+    let lastShownYear = -Infinity;
+    for (const lm of landmarks) {
+      if (!recordByYear.has(lm.year)) continue;
+      if (lm.year - lastShownYear >= minGap) {
+        shown.add(lm.year);
+        lastShownYear = lm.year;
+      }
+    }
+    return shown;
+  }, [landmarks, recordByYear, firstYear, lastYear]);
+
   const activeHoveredRecord = useMemo(
     () => (hoveredRing !== null ? records.find((r) => r.ringIndex === hoveredRing) : null),
     [hoveredRing, records]
@@ -177,6 +191,15 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
           const isHovered = hoveredRing === rec.ringIndex;
           const isMarkerDrought = rec.climateIndex < 0.58;
           const lm = landmarksByYear.get(rec.calendarYear);
+          const showFlag = lm ? visibleFlagYears.has(rec.calendarYear) : false;
+          const posFrac =
+            (rec.calendarYear - firstYear) / Math.max(1, lastYear - firstYear);
+          const edgeClass =
+            posFrac > 0.85
+              ? 'pin-right-edge'
+              : posFrac < 0.12
+              ? 'pin-left-edge'
+              : '';
 
           return (
             <div
@@ -186,9 +209,9 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
               onClick={() => onHoverRing(isHovered ? null : rec.ringIndex)}
               title={`${rec.calendarYear} (Ring #${rec.ringIndex}): ${formatRingWidth(rec.meanWidthMm, unitSystem)}${lm ? ` — ${lm.fullName}` : ''}`}
             >
-              {lm && (
+              {lm && showFlag && (
                 <div
-                  className={`landmark-pin ${lm.type}`}
+                  className={`landmark-pin ${lm.type} ${edgeClass}`.trim()}
                   title={`${lm.fullName}: ${lm.description}`}
                 >
                   <span className="pin-flag">{lm.shortLabel}</span>

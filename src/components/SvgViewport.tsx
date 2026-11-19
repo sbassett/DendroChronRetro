@@ -14,6 +14,8 @@ export interface SvgViewportProps {
   onHoverRing: (ringIndex: number | null) => void;
   isExhibitionMode?: boolean;
   ambientDriftEnabled?: boolean;
+  transparentBackground?: boolean;
+  isDrawerOpen?: boolean;
   frostYears?: number[];
 }
 
@@ -140,6 +142,8 @@ export const SvgViewport: React.FC<SvgViewportProps> = ({
   onHoverRing,
   isExhibitionMode = false,
   ambientDriftEnabled = true,
+  transparentBackground = false,
+  isDrawerOpen = false,
   frostYears = [1783, 1809, 1816, 536, 1257],
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -443,7 +447,7 @@ export const SvgViewport: React.FC<SvgViewportProps> = ({
       ref={containerRef}
       className={`svg-viewport ${isDragging ? 'dragging' : ''} ${
         isExhibitionMode ? 'exhibition-viewport' : ''
-      }`}
+      } ${transparentBackground ? 'transparent-bg' : ''}`}
       style={{ touchAction: 'none' }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -512,7 +516,7 @@ export const SvgViewport: React.FC<SvgViewportProps> = ({
       {/* Dynamic Ring Inspection HUD */}
       {activeRec && rwiInfo && (
         <div
-          className="ring-inspector-badge"
+          className={`ring-inspector-badge ${isDrawerOpen ? 'drawer-offset' : ''}`}
           role="status"
           aria-live="polite"
         >

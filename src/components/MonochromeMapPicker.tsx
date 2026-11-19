@@ -7,6 +7,8 @@ interface MonochromeMapPickerProps {
   longitude: number;
   unitSystem: UnitSystem;
   onSelectLocation: (lat: number, lon: number) => void;
+  height?: number;
+  className?: string;
 }
 
 const OSM_TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -18,6 +20,8 @@ export const MonochromeMapPicker: React.FC<MonochromeMapPickerProps> = ({
   longitude,
   unitSystem,
   onSelectLocation,
+  height = 220,
+  className = '',
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -27,9 +31,10 @@ export const MonochromeMapPicker: React.FC<MonochromeMapPickerProps> = ({
   callbackRef.current = onSelectLocation;
 
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
+    const el = containerRef.current;
+    if (!el || mapRef.current) return;
 
-    const map = L.map(containerRef.current, {
+    const map = L.map(el, {
       center: [latitude, longitude],
       zoom: 6,
       zoomControl: true,
@@ -89,7 +94,25 @@ export const MonochromeMapPicker: React.FC<MonochromeMapPickerProps> = ({
     markerRef.current = marker;
     scaleControlRef.current = scaleCtrl;
 
+    const rafId = requestAnimationFrame(() => {
+      map.invalidateSize({ pan: false });
+    });
+    const timerId = window.setTimeout(() => {
+      map.invalidateSize({ pan: false });
+    }, 260);
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        map.invalidateSize({ pan: false });
+      });
+      resizeObserver.observe(el);
+    }
+
     return () => {
+      cancelAnimationFrame(rafId);
+      window.clearTimeout(timerId);
+      resizeObserver?.disconnect();
       map.remove();
       mapRef.current = null;
       markerRef.current = null;
@@ -127,8 +150,12 @@ export const MonochromeMapPicker: React.FC<MonochromeMapPickerProps> = ({
   }, [latitude, longitude]);
 
   return (
-    <div className="map-picker-wrapper">
-      <div ref={containerRef} className="monochrome-leaflet-map" />
+    <div className={`map-picker-wrapper ${className}`.trim()}>
+      <div
+        ref={containerRef}
+        className="monochrome-leaflet-map"
+        style={{ height: `${height}px` }}
+      />
       <div className="map-hint">Click map to sample exact coordinates</div>
     </div>
   );

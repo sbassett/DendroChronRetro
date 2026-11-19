@@ -218,10 +218,11 @@ describe('Milestone 5 (R5): Metadata, Cross-Device Polish & Release Staging', ()
   describe('4. Cross-Device Responsiveness & High-DPI Scaling', () => {
     const appCss = fs.readFileSync(path.resolve(cwd, 'src/App.css'), 'utf-8');
 
-    it('defines mobile breakpoints for inverted hierarchy and compact viewport scaling', () => {
+    it('defines mobile breakpoints for full-screen specimen canvas and bottom toggle sheet', () => {
       expect(appCss).toContain('@media (max-width: 920px)');
       expect(appCss).toContain('@media (max-width: 480px)');
-      expect(appCss).toContain('order: 2'); // canvas-area hero priority on mobile
+      expect(appCss).toContain('.mobile-bottom-tab');
+      expect(appCss).toContain('.mobile-sheet-panel');
     });
 
     it('defines tablet and large desktop viewport breakpoints', () => {
@@ -231,7 +232,7 @@ describe('Milestone 5 (R5): Metadata, Cross-Device Polish & Release Staging', ()
 
     it('defines ultra-wide and 4K gallery screen breakpoint (>= 2101px)', () => {
       expect(appCss).toContain('@media (min-width: 2101px)');
-      expect(appCss).toContain('grid-template-columns: 460px 1fr');
+      expect(appCss).toContain('width: 272px');
     });
 
     it('enforces High-DPI Retina scaling rules preventing pixelation and blur', () => {

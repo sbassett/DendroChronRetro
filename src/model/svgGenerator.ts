@@ -22,6 +22,7 @@ import {
 import { SeededRNG } from './prng';
 import { SPECIES_PROFILES } from './species';
 import {
+  computeEndGrainConfig,
   generateTextureFilterDefs,
   TextureFilterOptions,
   WOOD_GRAIN_FILTER_ID,
@@ -466,11 +467,20 @@ export interface PaletteMarkupCache {
   resinPockets: CachedResinPocket[];
 }
 
+export interface WoodBoundsMm {
+  minX: number;
+  minY: number;
+  width: number;
+  height: number;
+  diameterMm: number;
+}
+
 export interface SimSvgCache {
   rings: CachedRingPaths[];
   ringBlocks: string[];
   pithMarkup: string;
   cambiumBarkSmoothD: string;
+  woodBounds: WoodBoundsMm;
   barkDefsClipPaths: string;
   barkLayerMarkup: string;
   fireScars: CachedFireScar[];
@@ -726,8 +736,50 @@ export function precomputeSimSvgCache(sim: TreeSimulationResult): SimSvgCache {
       ? polarSmoothClosedPath(sim.rings[0].innerRadiusMm, sim.anglesRad, 2)
       : '';
 
-  // 3. Precompute bark contours and defs
+  // 3. Precompute bark contours, full cambium bounds, and defs
   const cambiumBarkSmoothD = polarSmoothClosedPath(sim.bark.cambiumRadiusMm, sim.anglesRad, 1);
+
+  let woodBounds: WoodBoundsMm = {
+    minX: -10,
+    minY: -10,
+    width: 20,
+    height: 20,
+    diameterMm: 20,
+  };
+  if (sim.bark.cambiumRadiusMm.length > 0 && sim.anglesRad.length > 0) {
+    let wMinX = Infinity;
+    let wMaxX = -Infinity;
+    let wMinY = Infinity;
+    let wMaxY = -Infinity;
+    const len = Math.min(sim.bark.cambiumRadiusMm.length, sim.anglesRad.length);
+    for (let i = 0; i < len; i++) {
+      const r = sim.bark.cambiumRadiusMm[i];
+      const theta = sim.anglesRad[i];
+      const x = r * Math.cos(theta);
+      const y = r * Math.sin(theta);
+      if (x < wMinX) wMinX = x;
+      if (x > wMaxX) wMaxX = x;
+      if (y < wMinY) wMinY = y;
+      if (y > wMaxY) wMaxY = y;
+    }
+    if (
+      Number.isFinite(wMinX) &&
+      Number.isFinite(wMaxX) &&
+      Number.isFinite(wMinY) &&
+      Number.isFinite(wMaxY)
+    ) {
+      const padMm = 1;
+      const spanX = wMaxX - wMinX;
+      const spanY = wMaxY - wMinY;
+      woodBounds = {
+        minX: wMinX - padMm,
+        minY: wMinY - padMm,
+        width: spanX + padMm * 2,
+        height: spanY + padMm * 2,
+        diameterMm: Math.max(spanX, spanY, 20),
+      };
+    }
+  }
 
   // 4. Precompute ray generator function & cache
   const rayPathsCache = new Map<boolean, { woodRayPaths: string; phloemRayPaths: string }>();
@@ -1101,6 +1153,7 @@ export function precomputeSimSvgCache(sim: TreeSimulationResult): SimSvgCache {
     ringBlocks: defaultMarkup.ringBlocks,
     pithMarkup: defaultMarkup.pithMarkup,
     cambiumBarkSmoothD,
+    woodBounds,
     barkDefsClipPaths,
     barkLayerMarkup: defaultMarkup.barkLayerMarkup,
     fireScars: defaultMarkup.fireScars,
@@ -1158,7 +1211,10 @@ export function generateCrossSectionSvgBundle(
   const effectiveMaxRing = Math.max(1, Math.min(sim.rings.length, rawMax));
 
   // Check bundle memoization cache
-  const cacheKey = `${effectiveMaxRing}:${options.highlightedRingIndex ?? ''}:${showBark}:${Boolean(options.showMedullaryRays)}:${showAnnotations}:${showLocator}:${showCaption}:${options.transparentBackground}:${options.unitSystem ?? 'us'}:${palette.id}:${enableFilter ? 'grain' : 'nograin'}`;
+  const texOptKey = options.textureFilterOptions
+    ? JSON.stringify(options.textureFilterOptions)
+    : '';
+  const cacheKey = `${effectiveMaxRing}:${options.highlightedRingIndex ?? ''}:${showBark}:${Boolean(options.showMedullaryRays)}:${showAnnotations}:${showLocator}:${showCaption}:${options.transparentBackground}:${options.unitSystem ?? 'us'}:${palette.id}:${enableFilter ? 'grain' : 'nograin'}:${texOptKey}`;
   const cachedBundle = cache.bundleCache.get(cacheKey);
   if (cachedBundle) {
     // Refresh LRU order on cache hit
@@ -1186,10 +1242,24 @@ export function generateCrossSectionSvgBundle(
       ? palMarkup.rings[effectiveMaxRing - 1].outerDStride1
       : cache.cambiumBarkSmoothD;
 
+  const effectiveCompositeMode =
+    options.textureFilterOptions?.woodGrainConfig?.compositeMode ?? 'overlay';
+  const useOverlayLayer = enableFilter && effectiveCompositeMode === 'overlay';
+
+  const specimenEndGrainConfig = computeEndGrainConfig(cache.woodBounds.diameterMm, {
+    intensityScale: palette.id === 'skeleton-plot' ? 0.72 : 1.0,
+    compositeMode: effectiveCompositeMode,
+  });
+
   const filterDefs = enableFilter
     ? generateTextureFilterDefs({
         ...options.textureFilterOptions,
         enableWoodGrain: true,
+        woodGrainConfig: {
+          ...specimenEndGrainConfig,
+          ...options.textureFilterOptions?.woodGrainConfig,
+        },
+        seed: options.textureFilterOptions?.seed ?? sim.seedHex,
         wrapDefs: false,
       })
     : '';
@@ -1213,7 +1283,8 @@ export function generateCrossSectionSvgBundle(
   }
 
   // Layer 2: Smooth Cubic-Bezier Annual Growth Rings from outermost (K) inward to (1)
-  const filterAttr = enableFilter ? ` filter="url(#${WOOD_GRAIN_FILTER_ID})"` : '';
+  const filterAttr =
+    enableFilter && !useOverlayLayer ? ` filter="url(#${WOOD_GRAIN_FILTER_ID})"` : '';
   elements.push(`<g id="annual-rings"${filterAttr}>`);
   const highlightedIdx = options.highlightedRingIndex ?? null;
   const ringLimit = Math.min(effectiveMaxRing, palMarkup.rings.length);
@@ -1244,6 +1315,16 @@ export function generateCrossSectionSvgBundle(
     elements.push(palMarkup.pithMarkup);
   }
   elements.push(`</g>`);
+
+  // Layer 2a: Non-destructive Transverse End-Grain Micro-Texture Overlay
+  if (useOverlayLayer) {
+    const wb = cache.woodBounds;
+    elements.push(
+      `<g id="end-grain-texture" pointer-events="none" clip-path="url(#wood-clip)">` +
+        `<rect x="${wb.minX.toFixed(2)}" y="${wb.minY.toFixed(2)}" width="${wb.width.toFixed(2)}" height="${wb.height.toFixed(2)}" fill="#808080" fill-opacity="0.001" filter="url(#${WOOD_GRAIN_FILTER_ID})"/>` +
+        `</g>`
+    );
+  }
 
   // Layer 2b: Traumatic Micro-Disturbances (Fire Scars & Resin Pockets)
   if (palMarkup.fireScars.length > 0) {

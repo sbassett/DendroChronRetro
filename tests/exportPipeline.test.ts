@@ -38,9 +38,11 @@ import {
   generateCrossSectionSvgBundle,
 } from '../src/model/svgGenerator';
 import {
+  computeEndGrainConfig,
   generateTextureFilterDefs,
   generateWatercolorBleedFilterXml,
   generateWoodGrainFilterXml,
+  normalizeFilterSeed,
   WATERCOLOR_BLEED_FILTER_ID,
   WOOD_GRAIN_FILTER_ID,
 } from '../src/model/textureFilters';
@@ -261,28 +263,85 @@ describe('Milestone 4 (R4): Palettes, Textures & High-Resolution Export', () => 
       const defs = generateTextureFilterDefs();
       expect(defs).toContain('<defs>');
       expect(defs).toContain('</defs>');
-      expect(defs).toContain(`<filter id="${WOOD_GRAIN_FILTER_ID}">`);
+      expect(defs).toContain(`id="${WOOD_GRAIN_FILTER_ID}"`);
       expect(defs).toContain(`<filter id="${WATERCOLOR_BLEED_FILTER_ID}">`);
     });
 
-    it('wood grain filter incorporates anisotropic feTurbulence with longitudinal fiber stretching', () => {
+    it('wood grain filter implements isotropic two-scale end-grain cellular pores and mottling without displacement', () => {
       const xml = generateWoodGrainFilterXml();
       expect(xml).toContain('type="fractalNoise"');
-      expect(xml).toContain('baseFrequency="0.02 0.35"');
-      expect(xml).toContain('scale="3.5"');
-      expect(xml).toContain('<feDisplacementMap');
-      expect(xml).toContain('in="SourceGraphic"');
-      expect(xml).toContain('in2="noise"');
+      expect(xml).toContain('primitiveUnits="userSpaceOnUse"');
+      expect(xml).toContain('color-interpolation-filters="sRGB"');
+      expect(xml).toContain('<feColorMatrix');
+      expect(xml).toContain('<feMerge');
+      expect(xml).not.toContain('<feDisplacementMap');
 
-      // Anisotropic frequency verification: freqX (0.02) << freqY (0.35)
-      const freqMatch = xml.match(/baseFrequency="([\d.]+)\s+([\d.]+)"/);
-      expect(freqMatch).not.toBeNull();
-      if (freqMatch) {
-        const fx = parseFloat(freqMatch[1]);
-        const fy = parseFloat(freqMatch[2]);
-        expect(fx).toBeLessThan(fy);
-        expect(fy / fx).toBeGreaterThanOrEqual(10);
+      // Every baseFrequency must be strictly isotropic (fx === fy), with poreFrequency > mottleFrequency
+      const freqMatches = [...xml.matchAll(/baseFrequency="([\d.]+)\s+([\d.]+)"/g)];
+      expect(freqMatches.length).toBe(2);
+      const [poreFx, poreFy] = [parseFloat(freqMatches[0][1]), parseFloat(freqMatches[0][2])];
+      const [mottleFx, mottleFy] = [parseFloat(freqMatches[1][1]), parseFloat(freqMatches[1][2])];
+      expect(poreFx).toBe(poreFy);
+      expect(mottleFx).toBe(mottleFy);
+      expect(poreFx).toBeGreaterThan(mottleFx);
+
+      // Matrix rows must read only the alpha channel (0 0 0 0 constant RGB columns)
+      const matrices = [...xml.matchAll(/values="([^"]+)"/g)].map((m) =>
+        m[1].trim().split(/\s+/).map(Number)
+      );
+      expect(matrices.length).toBe(3);
+      for (const vals of matrices) {
+        expect(vals.length).toBe(20);
+        // R, G, B rows have 0 multipliers on input channels [0..3], [5..8], [10..13]
+        expect(vals.slice(0, 4)).toEqual([0, 0, 0, 0]);
+        expect(vals.slice(5, 9)).toEqual([0, 0, 0, 0]);
+        expect(vals.slice(10, 14)).toEqual([0, 0, 0, 0]);
+        // Alpha row ignores input RGB channels [15..17] and operates solely on input A [18] + offset [19]
+        expect(vals.slice(15, 18)).toEqual([0, 0, 0]);
+        expect(vals[18]).not.toBe(0);
       }
+
+      // Default composite mode merges over SourceGraphic and masks to SourceAlpha
+      expect(xml).toContain('<feMergeNode in="SourceGraphic"/>');
+      expect(xml).toContain('in2="SourceAlpha" operator="in"');
+
+      // Overlay mode outputs only translucent texture layers
+      const overlayXml = generateWoodGrainFilterXml({ compositeMode: 'overlay' });
+      expect(overlayXml).not.toContain('SourceGraphic');
+      expect(overlayXml).not.toContain('SourceAlpha');
+    });
+
+    it('computeEndGrainConfig adapts spatial frequency to specimen diameter and preserves threshold neutrality', () => {
+      const smallSapling = computeEndGrainConfig(60);
+      const mediumStem = computeEndGrainConfig(400);
+      const giantElder = computeEndGrainConfig(1400);
+
+      expect(smallSapling.poreFrequency).toBe(2.5); // clamped upper bound
+      expect(mediumStem.poreFrequency).toBeCloseTo(0.6, 4);
+      expect(giantElder.poreFrequency).toBe(0.25); // clamped lower bound
+      expect(smallSapling.poreFrequency).toBeGreaterThan(mediumStem.poreFrequency);
+      expect(mediumStem.poreFrequency).toBeGreaterThan(giantElder.poreFrequency);
+
+      // Non-finite and non-positive diameters fall back safely to 400 mm baseline
+      expect(computeEndGrainConfig(NaN)).toEqual(mediumStem);
+      expect(computeEndGrainConfig(0)).toEqual(mediumStem);
+      expect(computeEndGrainConfig(-50)).toEqual(mediumStem);
+
+      // Intensity scaling scales contrast symmetrically while preserving alpha thresholds
+      const scaled = computeEndGrainConfig(400, { intensityScale: 0.72, compositeMode: 'overlay' });
+      expect(scaled.compositeMode).toBe('overlay');
+      expect(scaled.poreStrength).toBeCloseTo(mediumStem.poreStrength * 0.72, 4);
+      expect(scaled.cellWallHighlight).toBeCloseTo(mediumStem.cellWallHighlight * 0.72, 4);
+      expect(scaled.mottleStrength).toBeCloseTo(mediumStem.mottleStrength * 0.72, 4);
+
+      const scaledXml = generateWoodGrainFilterXml(scaled, 42);
+      const matrices = [...scaledXml.matchAll(/values="([^"]+)"/g)].map((m) =>
+        m[1].trim().split(/\s+/).map(Number)
+      );
+      // At threshold A = 0.48 (pores), A = 0.54 (cell walls), A = 0.52 (mottle), output alpha is ~0
+      expect(matrices[0][18] * 0.48 + matrices[0][19]).toBeCloseTo(0, 3);
+      expect(matrices[1][18] * 0.54 + matrices[1][19]).toBeCloseTo(0, 3);
+      expect(matrices[2][18] * 0.52 + matrices[2][19]).toBeCloseTo(0, 3);
     });
 
     it('watercolor bleed filter incorporates feGaussianBlur with restrained radius preventing blur blowout', () => {
@@ -300,25 +359,69 @@ describe('Milestone 4 (R4): Palettes, Textures & High-Resolution Export', () => 
       expect(xml).toContain('<feMergeNode in="SourceGraphic"/>');
     });
 
-    it('supports deterministic PRNG seed variation across filter instances', () => {
-      const defs42 = generateTextureFilterDefs({ seed: 42 });
-      const defs99 = generateTextureFilterDefs({ seed: 99 });
-      expect(defs42).toContain('seed="42"');
-      expect(defs99).toContain('seed="99"');
-      expect(defs42).not.toBe(defs99);
+    it('normalizes integer and arbitrary string seeds deterministically across filter layers', () => {
+      expect(normalizeFilterSeed(undefined)).toBeUndefined();
+      expect(normalizeFilterSeed(42)).toBe(42);
+      expect(normalizeFilterSeed('99')).toBe(99);
+      const hexSeed = normalizeFilterSeed(standardSim.seedHex);
+      expect(typeof hexSeed).toBe('number');
+      expect(Number.isInteger(hexSeed)).toBe(true);
+      expect(hexSeed!).toBeGreaterThan(0);
+      expect(normalizeFilterSeed(standardSim.seedHex)).toBe(hexSeed);
+
+      const xml42 = generateWoodGrainFilterXml(undefined, 42);
+      const xml99 = generateWoodGrainFilterXml(undefined, 99);
+      expect(xml42).toContain('seed="42"');
+      expect(xml42).toContain('seed="59"'); // uncorrelated mottle seed = 42 + 17
+      expect(xml99).toContain('seed="99"');
+      expect(xml99).toContain('seed="116"');
+      expect(xml42).not.toBe(xml99);
     });
 
-    it('svgGenerator integrates filter defs into SVG bundle when enabled and cleanly omits when disabled', () => {
+    it('svgGenerator applies clipped end-grain overlay without filtering vector rings and stays locked during peel', () => {
       const svgWithGrain = generateCrossSectionSvg(standardSim, {
         showBark: true,
         showMedullaryRays: true,
         showAnnotations: true,
         transparentBackground: false,
+        paletteId: 'aged-wood',
         enableWoodGrain: true,
       });
       expect(svgWithGrain).toContain(`id="${WOOD_GRAIN_FILTER_ID}"`);
-      expect(svgWithGrain).toContain(`url(#${WOOD_GRAIN_FILTER_ID})`);
+      expect(svgWithGrain).toContain('<g id="annual-rings">');
+      expect(svgWithGrain).not.toContain('<g id="annual-rings" filter=');
+      expect(svgWithGrain).toContain('<g id="end-grain-texture" pointer-events="none" clip-path="url(#wood-clip)">');
+      expect(svgWithGrain).toContain(`filter="url(#${WOOD_GRAIN_FILTER_ID})"`);
 
+      // Peeling rings keeps the exact same filter baseFrequency and seed (zero noise swimming)
+      const peeledSvg = generateCrossSectionSvg(standardSim, {
+        showBark: true,
+        showMedullaryRays: true,
+        showAnnotations: true,
+        transparentBackground: false,
+        paletteId: 'aged-wood',
+        enableWoodGrain: true,
+        maxRenderedRingIndex: 40,
+      });
+      const fullFilterBlock = svgWithGrain.match(/<filter id="wood-grain-filter"[\s\S]*?<\/filter>/)?.[0];
+      const peeledFilterBlock = peeledSvg.match(/<filter id="wood-grain-filter"[\s\S]*?<\/filter>/)?.[0];
+      expect(fullFilterBlock).toBeDefined();
+      expect(peeledFilterBlock).toBe(fullFilterBlock);
+
+      // Skeleton plot reduces end-grain contrast compared to aged-wood
+      const skelSvg = generateCrossSectionSvg(standardSim, {
+        showBark: true,
+        showMedullaryRays: true,
+        showAnnotations: true,
+        transparentBackground: false,
+        paletteId: 'skeleton-plot',
+        enableWoodGrain: true,
+      });
+      const agedSlope = Number(svgWithGrain.match(/result="poreLumens"/) ? svgWithGrain.match(/0 0 0 (-?[\d.]+) [\d.]+" result="poreLumens"/)?.[1] : NaN);
+      const skelSlope = Number(skelSvg.match(/0 0 0 (-?[\d.]+) [\d.]+" result="poreLumens"/)?.[1]);
+      expect(Math.abs(skelSlope)).toBeLessThan(Math.abs(agedSlope));
+
+      // Disabled wood grain omits filter and overlay completely
       const svgNoGrain = generateCrossSectionSvg(standardSim, {
         showBark: true,
         showMedullaryRays: true,
@@ -327,6 +430,8 @@ describe('Milestone 4 (R4): Palettes, Textures & High-Resolution Export', () => 
         enableWoodGrain: false,
       });
       expect(svgNoGrain).not.toContain(`url(#${WOOD_GRAIN_FILTER_ID})`);
+      expect(svgNoGrain).not.toContain('id="end-grain-texture"');
+      expect(svgNoGrain).not.toContain(`id="${WOOD_GRAIN_FILTER_ID}"`);
     });
   });
 

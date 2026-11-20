@@ -371,7 +371,7 @@ export const StyleAndLayersPanel: React.FC<StyleAndLayersPanelProps> = ({
             checked={enableWoodGrain}
             onChange={(e) => onToggleWoodGrain(e.target.checked)}
           />
-          <span>Wood Grain Micro-Texture (Anisotropic Fiber)</span>
+          <span>End-Grain Micro-Texture (Tracheid Pores)</span>
         </label>
       </section>
 

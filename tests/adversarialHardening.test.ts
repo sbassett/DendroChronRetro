@@ -82,7 +82,12 @@ describe('Tier 5 Adversarial Coverage Hardening Suite', () => {
   it('ADV-3: escapes seed attribute in SVG texture filters against XML injection', () => {
     const filterXml = generateWoodGrainFilterXml({}, 'safe-seed" onload="alert(1)');
     expect(filterXml).not.toContain('onload="alert(1)"');
-    expect(filterXml).toContain('safe-seed&quot;');
+    expect(filterXml).not.toContain('safe-seed');
+    expect(filterXml).toMatch(/seed="\d+"/);
+
+    const bleedXml = generateWatercolorBleedFilterXml({}, 'safe-seed" onload="alert(1)');
+    expect(bleedXml).not.toContain('onload="alert(1)"');
+    expect(bleedXml).toContain('safe-seed&quot;');
   });
 
   it('ADV-4: escapeXml safely coerces non-string arguments without throwing TypeError', () => {

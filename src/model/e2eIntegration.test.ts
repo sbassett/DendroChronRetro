@@ -19,6 +19,7 @@ import { simulateTreeCrossSection } from './growthEngine';
 import { generateCrossSectionSvg, generateCrossSectionSvgBundle } from './svgGenerator';
 import { SPECIES_PROFILES } from './species';
 import { CLIMATE_LANDMARKS } from './narrative';
+import { computeEndGrainConfig, generateWoodGrainFilterXml } from './textureFilters';
 import {
   EnvironmentDataset,
   MonthlyClimateYear,
@@ -845,14 +846,13 @@ describe('XYLEM E2E Integration Suite', () => {
         expect(bristleconePreset.recommendedPalette).toBe('skeleton-plot');
       });
 
-      it('T1_F12_4: SVG defs anisotropic texture filter includes feTurbulence and feDisplacementMap', () => {
-        const filterXml = `<filter id="wood-grain-filter">
-          <feTurbulence type="fractalNoise" baseFrequency="0.02 0.35" numOctaves="3" result="noise"/>
-          <feDisplacementMap in="SourceGraphic" in2="noise" scale="3.5" xChannelSelector="R" yChannelSelector="G"/>
-        </filter>`;
+      it('T1_F12_4: SVG defs end-grain texture filter includes isotropic feTurbulence, feColorMatrix, and feMerge without displacement', () => {
+        const filterXml = generateWoodGrainFilterXml(computeEndGrainConfig(400), dfSim.seedHex);
         expect(filterXml).toContain('id="wood-grain-filter"');
         expect(filterXml).toContain('<feTurbulence');
-        expect(filterXml).toContain('<feDisplacementMap');
+        expect(filterXml).toContain('<feColorMatrix');
+        expect(filterXml).toContain('<feMerge');
+        expect(filterXml).not.toContain('<feDisplacementMap');
       });
 
       it('T1_F12_5: palette tokens are reflected in generated SVG ring path styling', () => {
@@ -1566,10 +1566,18 @@ describe('XYLEM E2E Integration Suite', () => {
         expect(skelDark).toBe('#111111');
       });
 
-      it('T2_F12_4: anisotropic aspect ratio in wood grain filter elongates along grain axis', () => {
-        const freqX = 0.02;
-        const freqY = 0.35;
-        expect(freqX).toBeLessThan(freqY);
+      it('T2_F12_4: end-grain filter uses isotropic cellular frequencies scaled to specimen diameter', () => {
+        const saplingCfg = computeEndGrainConfig(120);
+        const elderCfg = computeEndGrainConfig(800);
+        expect(saplingCfg.poreFrequency).toBeGreaterThan(elderCfg.poreFrequency);
+        expect(saplingCfg.poreFrequency).toBeGreaterThan(saplingCfg.mottleFrequency);
+
+        const xml = generateWoodGrainFilterXml(saplingCfg, 42);
+        const matches = [...xml.matchAll(/baseFrequency="([\d.]+)\s+([\d.]+)"/g)];
+        expect(matches.length).toBe(2);
+        for (const [, fx, fy] of matches) {
+          expect(parseFloat(fx)).toBe(parseFloat(fy));
+        }
       });
 
       it('T2_F12_5: zero texture overhead when texture filters are disabled', () => {

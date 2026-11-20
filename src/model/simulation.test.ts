@@ -3,6 +3,7 @@ import {
   getCachedEnvironmentDataset,
   loadEnvironmentDataset,
 } from '../services/environmentApi';
+import { createBarkEvolutionContext } from './barkModel';
 import { simulateTreeCrossSection } from './growthEngine';
 import {
   generateEnvironmentalNarrative,
@@ -12,7 +13,8 @@ import {
   isWithinSpeciesNativeRange,
   projectToLocatorMap,
 } from './locatorMapData';
-import { LOCATION_PRESETS } from './species';
+import { SeededRNG } from './prng';
+import { LOCATION_PRESETS, SPECIES_PROFILES } from './species';
 import {
   generateCrossSectionSvg,
   generateCrossSectionSvgBundle,
@@ -826,5 +828,167 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
     expect(yearsNW).toContain(2021);
     // Southwest-only 2002 megadrought should not be flagged for mesic Oregon Cascades
     expect(yearsNW).not.toContain(2002);
+  });
+
+  const computeExpectedShedMm = (
+    morphology: 'furrowed-corky' | 'plated-scaly',
+    bTotal: number,
+    meanWoodR: number
+  ): number => {
+    const isPlated = morphology === 'plated-scaly';
+    const e0 = isPlated ? 22 : 35;
+    const e1 = isPlated ? 56 : 90;
+    const u = Math.min(1, Math.max(0, (meanWoodR - e0) / (e1 - e0)));
+    const ss = u * u * (3 - 2 * u);
+    const sapShed = (isPlated ? 2.5 : 1.4) * ss;
+    const onset = isPlated ? 12.0 : 44.0;
+    const maxRet = isPlated ? 34.0 : 80.0;
+    const span = maxRet - onset;
+    const ret =
+      bTotal <= onset
+        ? bTotal
+        : onset + span * (1 - Math.exp(-(bTotal - onset) / span));
+    return Math.max(sapShed, Math.max(0, bTotal - ret));
+  };
+
+  it('produces a continuum multi-scale fissure depth hierarchy with intact bridging lower cohorts beneath partial splits', () => {
+    const env = makeMockEnvironment(9.5, 680, 12, 195);
+
+    for (const species of ['ponderosa-pine', 'douglas-fir'] as const) {
+      const sim = simulateTreeCrossSection(
+        {
+          species,
+          latitude: 44.4622,
+          longitude: -121.6358,
+          totalAge: 140,
+          deathYear: 2026,
+        },
+        env
+      );
+      const ctx = createBarkEvolutionContext(
+        SPECIES_PROFILES[species],
+        sim.anglesRad,
+        sim.rings,
+        new SeededRNG(sim.seedKey).fork('bark')
+      );
+      const k = sim.rings.length;
+      const st = ctx.ringStates[k];
+      const B = st.bRhytMm;
+      const shed = computeExpectedShedMm(ctx.morphology, B, st.meanRadiusMm);
+      const H = B - shed;
+
+      const depths = ctx.fissures
+        .filter((f) => f.nucRing <= k)
+        .map((f) => (f.tipB[k] - shed) / Math.max(0.1, H));
+      const deepCount = depths.filter((d) => d >= 0.8).length;
+      const partialCount = depths.filter((d) => d < 0.75).length;
+
+      expect(deepCount).toBeGreaterThanOrEqual(8);
+      expect(partialCount).toBeGreaterThanOrEqual(1);
+
+      // Evaluated bark surface also exhibits both deep canyons and shallower secondary splits
+      const rhyt = sim.bark.outerBarkRadiusMm.map(
+        (r, i) => r - sim.bark.phloemOuterRadiusMm[i]
+      );
+      const maxR = Math.max(...rhyt);
+      const n = rhyt.length;
+      const troughDepths: number[] = [];
+      for (let i = 0; i < n; i++) {
+        let isLocalMin = true;
+        for (let d = -4; d <= 4; d++) {
+          if (rhyt[(i + d + n) % n] < rhyt[i]) {
+            isLocalMin = false;
+            break;
+          }
+        }
+        if (isLocalMin && rhyt[i] < maxR * 0.94) {
+          troughDepths.push(1 - rhyt[i] / maxR);
+        }
+      }
+      expect(troughDepths.filter((d) => d >= 0.8).length).toBeGreaterThanOrEqual(8);
+      expect(
+        troughDepths.filter((d) => d >= 0.08 && d < 0.75).length
+      ).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('maintains strictly non-decreasing physical fissure openings and progressive inward tip propagation', () => {
+    const env = makeMockEnvironment(9.5, 680, 12, 195);
+
+    for (const species of ['ponderosa-pine', 'douglas-fir'] as const) {
+      const sim = simulateTreeCrossSection(
+        {
+          species,
+          latitude: 44.4622,
+          longitude: -121.6358,
+          totalAge: 140,
+          deathYear: 2026,
+        },
+        env
+      );
+      const ctx = createBarkEvolutionContext(
+        SPECIES_PROFILES[species],
+        sim.anglesRad,
+        sim.rings,
+        new SeededRNG(sim.seedKey).fork('bark')
+      );
+
+      expect(ctx.fissures.length).toBeGreaterThan(10);
+
+      for (const f of ctx.fissures) {
+        const nucState = ctx.ringStates[f.nucRing];
+        const shed0 = computeExpectedShedMm(
+          ctx.morphology,
+          nucState.bRhytMm,
+          nucState.meanRadiusMm
+        );
+
+        // Initiates at the exterior surface (zero initial depth, never an instantaneous full-depth cut)
+        expect(f.tipB[f.nucRing]).toBeCloseTo(shed0, 5);
+        expect(f.cumOpenL[f.nucRing] + f.cumOpenR[f.nucRing]).toBe(0);
+
+        for (let k = f.nucRing + 1; k < ctx.ringStates.length; k++) {
+          const openPrev = f.cumOpenL[k - 1] + f.cumOpenR[k - 1];
+          const openCurr = f.cumOpenL[k] + f.cumOpenR[k];
+          expect(openCurr).toBeGreaterThanOrEqual(openPrev - 1e-12);
+          expect(f.tipB[k]).toBeGreaterThanOrEqual(f.tipB[k - 1] - 1e-12);
+        }
+      }
+    }
+  });
+
+  it('scales average bark plate spacing upward from sapling to mature trunk via shear-lag physics', () => {
+    const env = makeMockEnvironment(9.5, 680, 12, 195);
+
+    for (const species of ['ponderosa-pine', 'douglas-fir'] as const) {
+      const sim = simulateTreeCrossSection(
+        {
+          species,
+          latitude: 44.4622,
+          longitude: -121.6358,
+          totalAge: 140,
+          deathYear: 2026,
+        },
+        env
+      );
+      const ctx = createBarkEvolutionContext(
+        SPECIES_PROFILES[species],
+        sim.anglesRad,
+        sim.rings,
+        new SeededRNG(sim.seedKey).fork('bark')
+      );
+
+      const sampleRings = [15, 35, 70, sim.rings.length];
+      const spacings = sampleRings.map((rIdx) => {
+        const activeCount = ctx.fissures.filter((f) => f.nucRing <= rIdx).length;
+        const meanR = ctx.ringStates[rIdx].meanRadiusMm;
+        return (2 * Math.PI * meanR) / Math.max(1, activeCount);
+      });
+
+      expect(spacings[spacings.length - 1]).toBeGreaterThan(spacings[0] * 1.8);
+      for (let i = 1; i < spacings.length; i++) {
+        expect(spacings[i]).toBeGreaterThanOrEqual(spacings[i - 1] * 0.92);
+      }
+    }
   });
 });

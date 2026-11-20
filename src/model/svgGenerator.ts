@@ -1000,15 +1000,23 @@ export function precomputeSimSvgCache(sim: TreeSimulationResult): SimSvgCache {
   );
   const defaultMarkup = getPaletteMarkup(defaultPalette);
 
-  // Lazy historical bark cache (LRU capped at MAX_HISTORICAL_BARK_CACHE_SIZE)
-  let barkEvolutionCtx: BarkEvolutionContext | null = null;
+  // Precomputed historical bark context & LRU slice cache (capped at MAX_HISTORICAL_BARK_CACHE_SIZE)
+  const barkEvolutionCtx: BarkEvolutionContext | null =
+    sim.rings.length > 0
+      ? createBarkEvolutionContext(
+          SPECIES_PROFILES[sim.params.species],
+          sim.anglesRad,
+          sim.rings,
+          new SeededRNG(sim.seedKey).fork('bark')
+        )
+      : null;
   const historicalBarkCache = new Map<string, HistoricalBarkCacheEntry>();
 
   function getHistoricalBark(
     ringIndex: number,
     palette: PaletteDefinition
   ): HistoricalBarkCacheEntry | null {
-    if (ringIndex < 1 || ringIndex >= sim.rings.length) {
+    if (!barkEvolutionCtx || ringIndex < 1 || ringIndex >= sim.rings.length) {
       return null;
     }
     const key = `${ringIndex}:${palette.id}`;
@@ -1017,15 +1025,6 @@ export function precomputeSimSvgCache(sim: TreeSimulationResult): SimSvgCache {
       historicalBarkCache.delete(key);
       historicalBarkCache.set(key, existing);
       return existing;
-    }
-
-    if (!barkEvolutionCtx) {
-      barkEvolutionCtx = createBarkEvolutionContext(
-        SPECIES_PROFILES[sim.params.species],
-        sim.anglesRad,
-        sim.rings,
-        new SeededRNG(sim.seedKey).fork('bark')
-      );
     }
 
     const sliceRing = sim.rings[ringIndex - 1];

@@ -3,7 +3,12 @@ import {
   getCachedEnvironmentDataset,
   loadEnvironmentDataset,
 } from '../services/environmentApi';
-import { createBarkEvolutionContext } from './barkModel';
+import {
+  buildAnatomicalBarkAtRing,
+  computeBarkShedMm,
+  createBarkEvolutionContext,
+  measureCohortRigidArcRatios,
+} from './barkModel';
 import { simulateTreeCrossSection } from './growthEngine';
 import {
   generateEnvironmentalNarrative,
@@ -830,27 +835,6 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
     expect(yearsNW).not.toContain(2002);
   });
 
-  const computeExpectedShedMm = (
-    morphology: 'furrowed-corky' | 'plated-scaly',
-    bTotal: number,
-    meanWoodR: number
-  ): number => {
-    const isPlated = morphology === 'plated-scaly';
-    const e0 = isPlated ? 22 : 35;
-    const e1 = isPlated ? 56 : 90;
-    const u = Math.min(1, Math.max(0, (meanWoodR - e0) / (e1 - e0)));
-    const ss = u * u * (3 - 2 * u);
-    const sapShed = (isPlated ? 2.5 : 1.4) * ss;
-    const onset = isPlated ? 12.0 : 44.0;
-    const maxRet = isPlated ? 34.0 : 80.0;
-    const span = maxRet - onset;
-    const ret =
-      bTotal <= onset
-        ? bTotal
-        : onset + span * (1 - Math.exp(-(bTotal - onset) / span));
-    return Math.max(sapShed, Math.max(0, bTotal - ret));
-  };
-
   it('produces a continuum multi-scale fissure depth hierarchy with intact bridging lower cohorts beneath partial splits', () => {
     const env = makeMockEnvironment(9.5, 680, 12, 195);
 
@@ -874,7 +858,7 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
       const k = sim.rings.length;
       const st = ctx.ringStates[k];
       const B = st.bRhytMm;
-      const shed = computeExpectedShedMm(ctx.morphology, B, st.meanRadiusMm);
+      const shed = computeBarkShedMm(ctx.morphology, B, st.meanRadiusMm);
       const H = B - shed;
 
       const depths = ctx.fissures
@@ -937,7 +921,7 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
 
       for (const f of ctx.fissures) {
         const nucState = ctx.ringStates[f.nucRing];
-        const shed0 = computeExpectedShedMm(
+        const shed0 = computeBarkShedMm(
           ctx.morphology,
           nucState.bRhytMm,
           nucState.meanRadiusMm
@@ -989,6 +973,170 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
       for (let i = 1; i < spacings.length; i++) {
         expect(spacings[i]).toBeGreaterThanOrEqual(spacings[i - 1] * 0.92);
       }
+    }
+  });
+
+  it('conserves rigid dead-bark physical arc length (<= 1.0x birth circumference) across all surviving cohorts', () => {
+    const env = makeMockEnvironment(9.5, 680, 12, 195);
+
+    for (const species of ['ponderosa-pine', 'douglas-fir'] as const) {
+      for (const totalAge of [35, 70, 140, 260]) {
+        const sim = simulateTreeCrossSection(
+          {
+            species,
+            latitude: 44.4622,
+            longitude: -121.6358,
+            totalAge,
+            deathYear: 2026,
+          },
+          env
+        );
+        const ctx = createBarkEvolutionContext(
+          SPECIES_PROFILES[species],
+          sim.anglesRad,
+          sim.rings,
+          new SeededRNG(sim.seedKey).fork('bark')
+        );
+        const metrics = measureCohortRigidArcRatios(ctx, sim.rings.length);
+        expect(metrics.length).toBeGreaterThan(0);
+
+        for (const metric of metrics) {
+          expect(metric.stretchRatio).toBeLessThanOrEqual(1.0001);
+          expect(metric.totalSegmentLengthMm).toBeLessThanOrEqual(
+            metric.birthCircMm + 1e-6
+          );
+        }
+      }
+    }
+  });
+
+  it('advects dead scales and cork lenses rigidly in physical millimeters without stretching as trunk radius expands', () => {
+    const env = makeMockEnvironment(9.5, 680, 12, 195);
+    const twoPi = 2 * Math.PI;
+
+    const getMaxBandCellWidthMm = (
+      ctx: ReturnType<typeof createBarkEvolutionContext>,
+      ringIdx: number,
+      cohortIdx: number
+    ): number => {
+      const bark = buildAnatomicalBarkAtRing(ctx, ringIdx);
+      const spec = ctx.cohortSpecs[cohortIdx];
+      const B = ctx.ringStates[ringIdx].bRhytMm;
+      const zIn = Math.max(0, B - spec.bEndMm);
+      const zOut = B - spec.bStartMm;
+      let maxWidthMm = 0;
+
+      for (const cell of bark.rhytidomeCells) {
+        if (cell.pointsPolar.length < 4) continue;
+        let minTh = Infinity;
+        let maxTh = -Infinity;
+        let rSum = 0;
+        for (const pt of cell.pointsPolar) {
+          if (pt.theta < minTh) minTh = pt.theta;
+          if (pt.theta > maxTh) maxTh = pt.theta;
+          rSum += pt.r;
+        }
+        const midTh = 0.5 * (minTh + maxTh);
+        const rMid = rSum / cell.pointsPolar.length;
+        const normTh = ((midTh % twoPi) + twoPi) % twoPi;
+        const phIdx =
+          Math.floor((normTh / twoPi) * bark.phloemOuterRadiusMm.length) %
+          bark.phloemOuterRadiusMm.length;
+        const zMidCell = rMid - bark.phloemOuterRadiusMm[phIdx];
+        if (zMidCell >= zIn && zMidCell <= zOut) {
+          const widthMm = (maxTh - minTh) * rMid;
+          if (widthMm > maxWidthMm) maxWidthMm = widthMm;
+        }
+      }
+      return maxWidthMm;
+    };
+
+    // Douglas-fir retains cohort #6 across rapid radial expansion from ring 35 -> ring 80
+    {
+      const sim = simulateTreeCrossSection(
+        {
+          species: 'douglas-fir',
+          latitude: 44.4622,
+          longitude: -121.6358,
+          totalAge: 140,
+          deathYear: 2026,
+        },
+        env
+      );
+      const ctx = createBarkEvolutionContext(
+        SPECIES_PROFILES['douglas-fir'],
+        sim.anglesRad,
+        sim.rings,
+        new SeededRNG(sim.seedKey).fork('bark')
+      );
+      const targetCoh = 6;
+      const r35 = ctx.ringStates[35].meanRadiusMm;
+      const r80 = ctx.ringStates[80].meanRadiusMm;
+      expect(r80).toBeGreaterThan(r35 * 1.7);
+
+      const m35 = measureCohortRigidArcRatios(ctx, 35).find(
+        (m) => m.cohortIdx === targetCoh
+      );
+      const m80 = measureCohortRigidArcRatios(ctx, 80).find(
+        (m) => m.cohortIdx === targetCoh
+      );
+      expect(m35).toBeDefined();
+      expect(m80).toBeDefined();
+      expect(m80!.totalSegmentLengthMm).toBeLessThanOrEqual(
+        m35!.totalSegmentLengthMm + 1e-6
+      );
+
+      const angOcc35 = m35!.totalSegmentLengthMm / (twoPi * r35);
+      const angOcc80 = m80!.totalSegmentLengthMm / (twoPi * r80);
+      expect(angOcc80).toBeLessThan(angOcc35 * 0.7);
+
+      const maxCellWidth35 = getMaxBandCellWidthMm(ctx, 35, targetCoh);
+      const maxCellWidth80 = getMaxBandCellWidthMm(ctx, 80, targetCoh);
+      expect(maxCellWidth35).toBeGreaterThan(2);
+      expect(maxCellWidth80).toBeLessThanOrEqual(maxCellWidth35 * 1.15);
+    }
+
+    // Ponderosa pine advects cohort #7 rigidly from ring 35 -> ring 50, then exfoliates cleanly by ring 80
+    {
+      const sim = simulateTreeCrossSection(
+        {
+          species: 'ponderosa-pine',
+          latitude: 44.4622,
+          longitude: -121.6358,
+          totalAge: 140,
+          deathYear: 2026,
+        },
+        env
+      );
+      const ctx = createBarkEvolutionContext(
+        SPECIES_PROFILES['ponderosa-pine'],
+        sim.anglesRad,
+        sim.rings,
+        new SeededRNG(sim.seedKey).fork('bark')
+      );
+      const targetCoh = 7;
+      const r35 = ctx.ringStates[35].meanRadiusMm;
+      const r50 = ctx.ringStates[50].meanRadiusMm;
+      expect(r50).toBeGreaterThan(r35 * 1.25);
+
+      const m35 = measureCohortRigidArcRatios(ctx, 35).find(
+        (m) => m.cohortIdx === targetCoh
+      );
+      const m50 = measureCohortRigidArcRatios(ctx, 50).find(
+        (m) => m.cohortIdx === targetCoh
+      );
+      const metricsAt80 = measureCohortRigidArcRatios(ctx, 80);
+      expect(m35).toBeDefined();
+      expect(m50).toBeDefined();
+      expect(m50!.totalSegmentLengthMm).toBeLessThanOrEqual(
+        m35!.totalSegmentLengthMm + 1e-6
+      );
+      expect(metricsAt80.some((m) => m.cohortIdx === targetCoh)).toBe(false);
+
+      const maxCellWidth35 = getMaxBandCellWidthMm(ctx, 35, targetCoh);
+      const maxCellWidth50 = getMaxBandCellWidthMm(ctx, 50, targetCoh);
+      expect(maxCellWidth35).toBeGreaterThan(2);
+      expect(maxCellWidth50).toBeLessThanOrEqual(maxCellWidth35 * 1.15);
     }
   });
 });

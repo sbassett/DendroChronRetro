@@ -198,9 +198,10 @@ export const ColophonModal: React.FC<ColophonModalProps> = ({ isOpen, onClose })
                 pith displacement resulting from terrain slope gravity vectors and prevailing wind load harmonics.
               </li>
               <li>
-                <strong>Deterministic Seeding &amp; Climatology</strong>: Merges historical reanalysis (NASA POWER MERRA-2
-                and ECMWF ERA5) with topographically downscaled PRISM/WorldClim baselines, sealed with a reproducible
-                cryptographic PRNG seed.
+                <strong>Multi-Tier Historical Climatology</strong>: Combines NASA POWER MERRA-2 (1981–present)
+                and ECMWF ERA5 reanalysis (1940–1980) with NOAA nClimDiv monthly station records (1895–1939),
+                LBDA v2 drought, WNATA/N-TREND summer temperature reconstructions (1200–1894), and Crowley &amp;
+                Unterman (2013) ice-core volcanic aerosol forcing, sealed with a reproducible cryptographic PRNG seed.
               </li>
             </ul>
           </section>
@@ -223,7 +224,7 @@ export const ColophonModal: React.FC<ColophonModalProps> = ({ isOpen, onClose })
               </div>
               <div className="meta-item">
                 <span className="meta-label">Climatological Source</span>
-                <span className="meta-value">NASA POWER MERRA-2 &amp; ECMWF ERA5 Reanalyses</span>
+                <span className="meta-value">MERRA-2, ERA5, NOAA nClimDiv, LBDA v2, WNATA &amp; eVolv/Crowley Ice Cores</span>
               </div>
               <div className="meta-item">
                 <span className="meta-label">Date &amp; Edition</span>

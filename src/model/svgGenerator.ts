@@ -611,29 +611,59 @@ export function precomputeSimSvgCache(sim: TreeSimulationResult): SimSvgCache {
     barkLayerElements.push(`</g>`);
     const palBarkMarkup = barkLayerElements.join('\n');
 
-    // Fire scars
+    // Fire scars: shallow anatomical charred cambial crust ribbons tracing exact killed ring contours
     const palFireScars: CachedFireScar[] = (sim.fireScars ?? []).map((scar) => {
-      const startAngle = scar.catfaceArcStartRad;
-      const endAngle = scar.catfaceArcEndRad;
-      const rExposed = scar.exposedWoodRadiusMm;
-      const x1 = (rExposed * Math.cos(startAngle)).toFixed(2);
-      const y1 = (rExposed * Math.sin(startAngle)).toFixed(2);
-      const x2 = (rExposed * Math.cos(endAngle)).toFixed(2);
-      const y2 = (rExposed * Math.sin(endAngle)).toFixed(2);
+      let pts: PolarPoint[] = scar.scarArcPoints ?? [];
+      if (pts.length < 3) {
+        const startAngle = scar.catfaceArcStartRad;
+        let arcSpan = scar.catfaceArcEndRad - startAngle;
+        if (arcSpan < 0) arcSpan += 2 * Math.PI;
+        if (arcSpan <= 0.05) arcSpan = 0.6;
+        const fallbackN = 32;
+        pts = [];
+        for (let i = 0; i < fallbackN; i++) {
+          const u = i / (fallbackN - 1);
+          pts.push({
+            theta: startAngle + u * arcSpan,
+            r: scar.exposedWoodRadiusMm,
+          });
+        }
+      }
 
-      let arcSpan = endAngle - startAngle;
-      if (arcSpan < 0) arcSpan += 2 * Math.PI;
-      const largeArc = arcSpan > Math.PI ? 1 : 0;
+      const charDepthMm = Math.max(
+        1.0,
+        Math.min(2.4, 1.1 + (scar.fireIntensity ?? 0.65) * 1.1)
+      );
+      const outerPts: string[] = [];
+      const innerPts: string[] = [];
+      const innerLinePts: string[] = [];
+
+      for (let i = 0; i < pts.length; i++) {
+        const u = i / (pts.length - 1);
+        const pt = pts[i];
+        const taper = Math.pow(Math.sin(u * Math.PI), 0.55);
+        const rOuter = pt.r + 0.25 + 0.35 * taper;
+        const rInner = Math.max(2.0, pt.r - charDepthMm * (0.22 + 0.78 * taper));
+        const cosT = Math.cos(pt.theta);
+        const sinT = Math.sin(pt.theta);
+
+        const ox = (rOuter * cosT).toFixed(2);
+        const oy = (rOuter * sinT).toFixed(2);
+        const ix = (rInner * cosT).toFixed(2);
+        const iy = (rInner * sinT).toFixed(2);
+
+        outerPts.push(`${i === 0 ? 'M' : 'L'}${ox} ${oy}`);
+        innerPts.push(`L${ix} ${iy}`);
+        innerLinePts.push(`${i === 0 ? 'M' : 'L'}${ix} ${iy}`);
+      }
+
+      const charRibbonD = `${outerPts.join('')}${innerPts.reverse().join('')}Z`;
+      const innerLineD = innerLinePts.join('');
 
       const elements: string[] = [
-        `<path data-fire-year="${scar.year}" d="M 0 0 L ${x1} ${y1} A ${rExposed.toFixed(2)} ${rExposed.toFixed(2)} 0 ${largeArc} 1 ${x2} ${y2} Z" fill="${pal.fireCharColor}" fill-opacity="0.88" stroke="${pal.latewoodColor}" stroke-width="0.75"/>`,
+        `<path data-fire-year="${scar.year}" data-rescar="${scar.isRescar ? 'true' : 'false'}" d="${charRibbonD}" fill="${pal.fireCharColor}" fill-opacity="0.93" stroke="${pal.fireCharColor}" stroke-width="0.35" stroke-linejoin="round"/>`,
+        `<path pointer-events="none" d="${innerLineD}" fill="none" stroke="${pal.resinColor}" stroke-width="0.6" stroke-opacity="0.38" stroke-linecap="round"/>`,
       ];
-      for (const margin of scar.callusMarginCoordinates) {
-        elements.push(
-          `<circle cx="${margin.x.toFixed(2)}" cy="${margin.y.toFixed(2)}" r="${margin.curlRadiusMm.toFixed(2)}" fill="${blendHex(pal.earlywoodColor, pal.heartwoodTint, 0.25)}" stroke="${pal.latewoodColor}" stroke-width="0.55"/>`,
-          `<circle cx="${margin.x.toFixed(2)}" cy="${margin.y.toFixed(2)}" r="${(margin.curlRadiusMm * 0.45).toFixed(2)}" fill="${pal.pithColor}"/>`
-        );
-      }
       return {
         year: scar.year,
         markup: elements.join('\n'),

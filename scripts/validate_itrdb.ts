@@ -1,4 +1,6 @@
 import fs from 'fs';
+import path from 'path';
+import { setClimateAtlasFromBuffer } from '../src/services/climateAtlas';
 import { loadEnvironmentDataset } from '../src/services/environmentApi';
 import { simulateTreeCrossSection } from '../src/model/growthEngine';
 import { SpeciesId } from '../src/model/types';
@@ -208,6 +210,13 @@ async function runValidation() {
   console.log('  DENDROSIM FORWARD MODEL VALIDATION AGAINST ITRDB CHRONOLOGIES');
   console.log('================================================================================\n');
 
+  const atlasPath = path.resolve(process.cwd(), 'public/data/western-climate-atlas.bin');
+  if (fs.existsSync(atlasPath)) {
+    const buf = fs.readFileSync(atlasPath);
+    setClimateAtlasFromBuffer(buf);
+    console.log(`Loaded Western North America Climate Atlas (${buf.byteLength} bytes)\n`);
+  }
+
   const summaryResults: any[] = [];
 
   for (const site of SITES) {
@@ -239,7 +248,8 @@ async function runValidation() {
 
     const pairsAll: { yr: number; sim: number; obs: number }[] = [];
     const pairsNasa: { yr: number; sim: number; obs: number }[] = [];
-    const pairsPre: { yr: number; sim: number; obs: number }[] = [];
+    const pairsInstr: { yr: number; sim: number; obs: number }[] = [];
+    const pairsPaleo: { yr: number; sim: number; obs: number }[] = [];
 
     for (let yr = startYear; yr <= endYear; yr++) {
       const obsVal = empiricalSeries[String(yr)]?.rwi;
@@ -248,8 +258,10 @@ async function runValidation() {
         pairsAll.push({ yr, sim: simVal, obs: obsVal });
         if (yr >= 1981) {
           pairsNasa.push({ yr, sim: simVal, obs: obsVal });
+        } else if (yr >= 1895) {
+          pairsInstr.push({ yr, sim: simVal, obs: obsVal });
         } else {
-          pairsPre.push({ yr, sim: simVal, obs: obsVal });
+          pairsPaleo.push({ yr, sim: simVal, obs: obsVal });
         }
       }
     }
@@ -259,9 +271,14 @@ async function runValidation() {
       pairsNasa.map((p) => p.obs)
     );
 
-    const statsPre = computeStats(
-      pairsPre.map((p) => p.sim),
-      pairsPre.map((p) => p.obs)
+    const statsInstr = computeStats(
+      pairsInstr.map((p) => p.sim),
+      pairsInstr.map((p) => p.obs)
+    );
+
+    const statsPaleo = computeStats(
+      pairsPaleo.map((p) => p.sim),
+      pairsPaleo.map((p) => p.obs)
     );
 
     const statsAll = computeStats(
@@ -270,7 +287,7 @@ async function runValidation() {
     );
 
     console.log(`  Results for ${site.code.toUpperCase()}:`);
-    console.log(`    NASA POWER Period (1981-${endYear}, n=${pairsNasa.length}):`);
+    console.log(`    Satellite Reanalysis Period (1981-${endYear}, n=${pairsNasa.length}):`);
     if (pairsNasa.length >= 4) {
       console.log(`      Correlation r = ${statsNasa.r.toFixed(3)} (p = ${statsNasa.pVal < 0.001 ? '<0.001' : statsNasa.pVal.toFixed(4)})`);
       console.log(`      Reduction of Error CE = ${statsNasa.ce.toFixed(3)}`);
@@ -279,8 +296,15 @@ async function runValidation() {
     } else {
       console.log(`      (Chronology ends in ${endYear} before or shortly after 1981)`);
     }
-    console.log(`    Pre-1981 Synthetic Period (${startYear}-1980, n=${pairsPre.length}):`);
-    console.log(`      Correlation r = ${statsPre.r.toFixed(3)} (p = ${statsPre.pVal.toFixed(4)})`);
+    console.log(`    Non-Circular Instrumental Period (1895-1980, n=${pairsInstr.length}):`);
+    if (pairsInstr.length >= 4) {
+      console.log(`      Correlation r = ${statsInstr.r.toFixed(3)} (p = ${statsInstr.pVal < 0.001 ? '<0.001' : statsInstr.pVal.toFixed(4)})`);
+      console.log(`      Reduction of Error CE = ${statsInstr.ce.toFixed(3)}`);
+    }
+    if (pairsPaleo.length >= 4) {
+      console.log(`    Paleoclimate Proxy-Driven Period (${startYear}-1894, n=${pairsPaleo.length}):`);
+      console.log(`      Correlation r = ${statsPaleo.r.toFixed(3)} (proxy-driven; non-independent)`);
+    }
 
     const markerCheck: Record<number, { sim: number; obs: number }> = {};
     for (const yr of [2002, 1996, 1989, 1988, 1977, 1956, 1934]) {
@@ -293,10 +317,12 @@ async function runValidation() {
     summaryResults.push({
       site,
       nNasa: pairsNasa.length,
-      nPre: pairsPre.length,
+      nInstr: pairsInstr.length,
+      nPaleo: pairsPaleo.length,
       nAll: pairsAll.length,
       statsNasa,
-      statsPre,
+      statsInstr,
+      statsPaleo,
       statsAll,
       markerCheck,
       series: pairsNasa,

@@ -3,8 +3,33 @@ import {
   ClimateLandmark,
   getRelevantClimateLandmarks,
 } from '../model/narrative';
-import { AnnualRingRecord } from '../model/types';
+import { AnnualRingRecord, ClimateProvenance } from '../model/types';
 import { formatRingWidth, UnitSystem } from '../model/units';
+
+function formatShortProvenance(prov?: ClimateProvenance, isSynthetic?: boolean): string {
+  switch (prov) {
+    case 'reanalysis-merra2':
+      return 'MERRA-2';
+    case 'reanalysis-era5':
+      return 'ERA5';
+    case 'instrumental-nclimdiv':
+      return 'nClimDiv';
+    case 'paleo-atlas':
+      return 'Paleo Atlas';
+    case 'synthetic':
+      return 'Synthetic';
+    default:
+      return isSynthetic ? 'Synthetic' : 'Observed';
+  }
+}
+
+function barProvenanceClass(rec: AnnualRingRecord): string {
+  if (rec.climateProvenance === 'paleo-atlas') return 'paleo';
+  if (rec.climateProvenance === 'instrumental-nclimdiv') return 'instrumental';
+  if (rec.climateProvenance === 'reanalysis-era5') return 'era5';
+  if (rec.climateProvenance === 'synthetic') return 'synthetic';
+  return rec.isSyntheticClimate ? 'synthetic' : '';
+}
 
 interface RingChronologyChartProps {
   records: AnnualRingRecord[];
@@ -28,9 +53,44 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
   const maxWidth = Math.max(...records.map((r) => r.meanWidthMm), 1.0);
   const firstYear = records[0].calendarYear;
   const lastYear = records[records.length - 1].calendarYear;
-  const firstObservedTransitionYear = records[0].isSyntheticClimate
-    ? (records.find((r) => !r.isSyntheticClimate)?.calendarYear ?? null)
-    : null;
+
+  const axisTransitionMarkers = useMemo(() => {
+    const hasExplicitProvenance = records.some((r) => r.climateProvenance !== undefined);
+    if (!hasExplicitProvenance) {
+      const legacyStart = records[0].isSyntheticClimate
+        ? (records.find((r) => !r.isSyntheticClimate)?.calendarYear ?? null)
+        : null;
+      return legacyStart !== null
+        ? [`${legacyStart} (Observed Weather Start)`]
+        : [];
+    }
+
+    const candidates: Array<{ year: number; label: string }> = [];
+    const seen = new Set<string>();
+    const tierStartLabels: Partial<Record<ClimateProvenance, string>> = {
+      'instrumental-nclimdiv': 'Instrumental',
+      'reanalysis-era5': 'ERA5',
+      'reanalysis-merra2': 'MERRA-2',
+    };
+
+    for (let i = 1; i < records.length; i++) {
+      const prev = records[i - 1].climateProvenance;
+      const cur = records[i].climateProvenance;
+      if (cur && cur !== prev && tierStartLabels[cur] && !seen.has(cur)) {
+        seen.add(cur);
+        candidates.push({
+          year: records[i].calendarYear,
+          label: `${records[i].calendarYear} (${tierStartLabels[cur]})`,
+        });
+      }
+    }
+
+    if (candidates.length <= 2) {
+      return candidates.map((c) => c.label);
+    }
+    // Keep at most 2 well-spaced interior transition markers so the axis never crowds
+    return [candidates[0].label, candidates[candidates.length - 1].label];
+  }, [records]);
 
   // Filter regional climate landmarks for this tree's lifespan and geography
   const landmarks = useMemo(
@@ -54,6 +114,19 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
     return map;
   }, [records]);
 
+  const fireRecords = useMemo(
+    () => records.filter((r) => r.hasFireScar),
+    [records]
+  );
+
+  const fireByYear = useMemo(() => {
+    const map = new Map<number, AnnualRingRecord>();
+    for (const r of fireRecords) {
+      map.set(r.calendarYear, r);
+    }
+    return map;
+  }, [fireRecords]);
+
   const visibleFlagYears = useMemo(() => {
     const shown = new Set<number>();
     const minGap = Math.max(12, Math.round((lastYear - firstYear) * 0.14));
@@ -68,6 +141,30 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
     return shown;
   }, [landmarks, recordByYear, firstYear, lastYear]);
 
+  const visibleFirePinYears = useMemo(() => {
+    const shown = new Set<number>();
+    const minGap = Math.max(10, Math.round((lastYear - firstYear) * 0.08));
+    for (const fr of fireRecords) {
+      let overlaps = false;
+      for (const fy of visibleFlagYears) {
+        if (Math.abs(fr.calendarYear - fy) < minGap) {
+          overlaps = true;
+          break;
+        }
+      }
+      for (const py of shown) {
+        if (Math.abs(fr.calendarYear - py) < minGap) {
+          overlaps = true;
+          break;
+        }
+      }
+      if (!overlaps) {
+        shown.add(fr.calendarYear);
+      }
+    }
+    return shown;
+  }, [fireRecords, visibleFlagYears, firstYear, lastYear]);
+
   const activeHoveredRecord = useMemo(
     () => (hoveredRing !== null ? records.find((r) => r.ringIndex === hoveredRing) : null),
     [hoveredRing, records]
@@ -76,6 +173,10 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
   const activeLandmark = activeHoveredRecord
     ? landmarksByYear.get(activeHoveredRecord.calendarYear)
     : null;
+  const activeFireRecord =
+    activeHoveredRecord && activeHoveredRecord.hasFireScar
+      ? activeHoveredRecord
+      : null;
 
   const barsContainerRef = React.useRef<HTMLDivElement | null>(null);
   const isPointerScrubbingRef = React.useRef(false);
@@ -156,6 +257,28 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
               })}
             </div>
           )}
+          {fireRecords.length > 0 && (
+            <div className="landmark-chips-strip">
+              <span className="landmark-label">Fire Scars:</span>
+              {fireRecords.map((fr) => {
+                const isSelected = hoveredRing === fr.ringIndex;
+                return (
+                  <button
+                    key={`fire-${fr.calendarYear}`}
+                    type="button"
+                    className={`landmark-chip fire ${isSelected ? 'active' : ''}`}
+                    onClick={() => onHoverRing(isSelected ? null : fr.ringIndex)}
+                    onMouseEnter={() => onHoverRing(fr.ringIndex)}
+                    title={`${fr.calendarYear} CE — ${fr.isFireRescar ? 'Recorder-Tree Open Catface Re-Scar' : 'Wildfire Catface Scar'}${fr.fireIntensity !== undefined ? ` (Intensity ${Math.round(fr.fireIntensity * 100)}%)` : ''}`}
+                  >
+                    <span className="landmark-chip-dot" />
+                    {fr.calendarYear}
+                    {fr.isFireRescar ? ' (Re-Scar)' : ''}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
         <span className="chronology-legend">
           Peak: {formatRingWidth(maxWidth, unitSystem)} · Hover or tap bars to cross-date
@@ -168,6 +291,24 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
             {activeLandmark.fullName} ({activeHoveredRecord.calendarYear})
           </strong>
           <span> — {activeLandmark.description} (Ring: {formatRingWidth(activeHoveredRecord.meanWidthMm, unitSystem)})</span>
+        </div>
+      )}
+
+      {!activeLandmark && activeFireRecord && (
+        <div className="chronology-landmark-banner">
+          <strong>
+            {activeFireRecord.isFireRescar
+              ? `Recorder-Tree Re-Scar (${activeFireRecord.calendarYear} CE)`
+              : `Wildfire Catface Scar (${activeFireRecord.calendarYear} CE)`}
+          </strong>
+          <span>
+            {' '}
+            —{' '}
+            {activeFireRecord.isFireRescar
+              ? 'Surface wildfire re-injured an open pitch-exuding catface margin, charring the healing callus edge.'
+              : 'Thermal necrosis killed a localized cambial sector, exposing bare heartwood and initiating decadal woundwood healing.'}{' '}
+            (Ring: {formatRingWidth(activeFireRecord.meanWidthMm, unitSystem)})
+          </span>
         </div>
       )}
 
@@ -191,7 +332,10 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
           const isHovered = hoveredRing === rec.ringIndex;
           const isMarkerDrought = rec.climateIndex < 0.58;
           const lm = landmarksByYear.get(rec.calendarYear);
+          const fireRec = fireByYear.get(rec.calendarYear);
           const showFlag = lm ? visibleFlagYears.has(rec.calendarYear) : false;
+          const showFirePin =
+            !showFlag && fireRec ? visibleFirePinYears.has(rec.calendarYear) : false;
           const posFrac =
             (rec.calendarYear - firstYear) / Math.max(1, lastYear - firstYear);
           const edgeClass =
@@ -200,6 +344,11 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
               : posFrac < 0.12
               ? 'pin-left-edge'
               : '';
+          const fireSuffix = fireRec
+            ? fireRec.isFireRescar
+              ? ' — Fire Re-Scar'
+              : ' — Fire Scar'
+            : '';
 
           return (
             <div
@@ -207,7 +356,7 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
               className={`chrono-bar-col ${isHovered ? 'active' : ''} ${lm ? 'has-landmark' : ''}`}
               onMouseEnter={() => onHoverRing(rec.ringIndex)}
               onClick={() => onHoverRing(isHovered ? null : rec.ringIndex)}
-              title={`${rec.calendarYear} (Ring #${rec.ringIndex}): ${formatRingWidth(rec.meanWidthMm, unitSystem)}${lm ? ` — ${lm.fullName}` : ''}`}
+              title={`${rec.calendarYear} (Ring #${rec.ringIndex}, ${formatShortProvenance(rec.climateProvenance, rec.isSyntheticClimate)}): ${formatRingWidth(rec.meanWidthMm, unitSystem)}${lm ? ` — ${lm.fullName}` : ''}${fireSuffix}`}
             >
               {lm && showFlag && (
                 <div
@@ -218,8 +367,19 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
                   <span className="pin-stem" />
                 </div>
               )}
+              {showFirePin && fireRec && (
+                <div
+                  className={`landmark-pin fire ${edgeClass}`.trim()}
+                  title={`${fireRec.calendarYear} CE: ${fireRec.isFireRescar ? 'Fire Re-Scar' : 'Wildfire Scar'}`}
+                >
+                  <span className="pin-flag">
+                    ’{String(fireRec.calendarYear).slice(-2)} Fire
+                  </span>
+                  <span className="pin-stem" />
+                </div>
+              )}
               <div
-                className={`chrono-bar ${isMarkerDrought ? 'drought' : ''} ${rec.isSyntheticClimate ? 'synthetic' : ''} ${lm ? 'landmark-bar' : ''}`}
+                className={`chrono-bar ${isMarkerDrought ? 'drought' : ''} ${barProvenanceClass(rec)} ${lm ? 'landmark-bar' : ''} ${fireRec ? 'fire-scar' : ''}`}
                 style={{ height: `${heightPct}%` }}
               />
             </div>
@@ -229,9 +389,9 @@ export const RingChronologyChart: React.FC<RingChronologyChartProps> = ({
 
       <div className="chronology-axis">
         <span>{firstYear} (Pith +1)</span>
-        {firstObservedTransitionYear !== null && (
-          <span>{firstObservedTransitionYear} (Observed Weather Start)</span>
-        )}
+        {axisTransitionMarkers.map((markerLabel) => (
+          <span key={markerLabel}>{markerLabel}</span>
+        ))}
         <span>{lastYear} (Cambium)</span>
       </div>
     </div>

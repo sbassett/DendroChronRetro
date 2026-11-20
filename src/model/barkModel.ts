@@ -85,7 +85,8 @@ export function buildAnatomicalBarkGeometry(
   woodAngles: number[],
   meanWoodRadiusMm: number,
   rngBark: SeededRNG,
-  rings?: PolarRingGeometry[]
+  rings?: PolarRingGeometry[],
+  openCatfaceArcs?: Array<{ centerAngleRad: number; halfArcRad: number }>
 ): BarkGeometry {
   const morphology = profile.bark.morphology;
   const twoPi = 2 * Math.PI;
@@ -711,6 +712,21 @@ export function buildAnatomicalBarkGeometry(
     const rCambium = sampleWoodRadius(theta);
     const rApproxPhloem = rCambium + basePhloemMm;
 
+    // Pinch living phloem & outer rhytidome smoothly to zero across any open dead fire catface
+    let catfaceBarkMask = 1.0;
+    if (openCatfaceArcs && openCatfaceArcs.length > 0) {
+      for (const arc of openCatfaceArcs) {
+        let dAng = Math.abs(theta - arc.centerAngleRad) % twoPi;
+        if (dAng > Math.PI) dAng = twoPi - dAng;
+        if (dAng <= arc.halfArcRad) {
+          catfaceBarkMask = 0;
+          break;
+        }
+        const m = smoothstep(arc.halfArcRad, arc.halfArcRad + 0.045, dAng);
+        if (m < catfaceBarkMask) catfaceBarkMask = m;
+      }
+    }
+
     const unwrapped = startOffset + wrapAngle(theta - startOffset);
     while (
       pCursor < plates.length - 1 &&
@@ -772,10 +788,9 @@ export function buildAnatomicalBarkGeometry(
       0.038 *
         (1 - 0.55 * nearActiveGroove) *
         phloemNoise.polarFbm(theta, 16, 2.7, 2);
-    const localPhloem = Math.max(
-      0.68,
-      basePhloemMm * phloemGroovePinch * phloemWave
-    );
+    const localPhloem =
+      Math.max(0.68, basePhloemMm * phloemGroovePinch * phloemWave) *
+      catfaceBarkMask;
     const rPhloem = rCambium + localPhloem;
     phloemOuterRadiusMm.push(rPhloem);
 
@@ -852,6 +867,12 @@ export function buildAnatomicalBarkGeometry(
       layerThick[0],
       Math.max(0, localSealMm - olderThick)
     );
+
+    if (catfaceBarkMask < 1.0) {
+      for (let s = 0; s < numActive; s++) {
+        layerThick[s] *= catfaceBarkMask;
+      }
+    }
 
     let cumZ = 0;
     cohortZ[0][i] = 0;

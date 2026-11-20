@@ -151,6 +151,38 @@ export const LedgerTelemetryPanel: React.FC<LedgerTelemetryPanelProps> = ({
                 )}
               </span>
             </div>
+            {simulation.fireScars && simulation.fireScars.length > 0 && (() => {
+              const scars = simulation.fireScars;
+              const uniqueYears = Array.from(new Set(scars.map((s) => s.year)));
+              const shownYears =
+                uniqueYears.length <= 4
+                  ? uniqueYears.join(', ')
+                  : `${uniqueYears.slice(0, 3).join(', ')} +${uniqueYears.length - 3}`;
+              const allHealed = scars.every((s) => s.healedYear !== undefined);
+              const latestHealed = allHealed
+                ? Math.max(...scars.map((s) => s.healedYear!))
+                : null;
+              const statusText =
+                allHealed && latestHealed !== null
+                  ? `Healed ${latestHealed}`
+                  : 'Open';
+              const standNote =
+                simulation.standFireYears && simulation.standFireYears.length > 0
+                  ? ` · Stand fires: ${simulation.standFireYears.join(', ')}`
+                  : '';
+              return (
+                <div
+                  className="telemetry-cell telemetry-cell-wide"
+                  title={`Scarred years: ${uniqueYears.join(', ')}${standNote}`}
+                >
+                  <span className="metric-label">Fire History</span>
+                  <span className="metric-value">
+                    {scars.length} {scars.length === 1 ? 'Scar' : 'Scars'} (
+                    {shownYears} · {statusText})
+                  </span>
+                </div>
+              );
+            })()}
             <div
               className="telemetry-cell telemetry-cell-wide"
               title={`Deterministic seed key: ${simulation.seedKey}`}

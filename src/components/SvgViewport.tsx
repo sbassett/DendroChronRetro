@@ -1,8 +1,28 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { SvgViewBox } from '../model/svgGenerator';
-import { AnnualRingRecord } from '../model/types';
+import { AnnualRingRecord, ClimateProvenance } from '../model/types';
 import { formatRingWidth, UnitSystem } from '../model/units';
+
+function formatProvenanceBadge(
+  prov?: ClimateProvenance,
+  isSynthetic?: boolean
+): string {
+  switch (prov) {
+    case 'reanalysis-merra2':
+      return 'NASA POWER MERRA-2';
+    case 'reanalysis-era5':
+      return 'ECMWF ERA5';
+    case 'instrumental-nclimdiv':
+      return 'NOAA nClimDiv Instrumental';
+    case 'paleo-atlas':
+      return 'LBDA v2 + WNATA Paleoclimate';
+    case 'synthetic':
+      return 'Synthetic Climatology';
+    default:
+      return isSynthetic ? 'Synthetic Climatology' : 'Observed Reanalysis';
+  }
+}
 
 export interface SvgViewportProps {
   innerMarkup: string;
@@ -46,6 +66,7 @@ export function getDisturbanceTraumaTags(
 
   // Traumatic cold shock
   if (
+    rec.hasFrostRing ||
     frostYears.includes(rec.calendarYear) ||
     (rec.limitingFactor === 'temperature' && rec.climateIndex < 0.5)
   ) {
@@ -60,6 +81,9 @@ export function getDisturbanceTraumaTags(
   // Fire Injury & Healing Callus Margin
   if (rec.hasFireScar) {
     tags.push('Fire Injury & Healing Callus Margin');
+    if (rec.isFireRescar) {
+      tags.push('Recorder-Tree Re-Scar');
+    }
   }
 
   // Locally Absent Ring
@@ -549,6 +573,33 @@ export const SvgViewport: React.FC<SvgViewportProps> = ({
               <span className="metric-label">Climatic Stress:</span>
               <span className="metric-val">{stressDescription}</span>
             </div>
+            {activeRec.hasFireScar && (
+              <div className="ring-metric-row">
+                <span className="metric-label">Fire Event:</span>
+                <span className="metric-val">
+                  {activeRec.isFireRescar
+                    ? 'Open-Catface Re-Scar'
+                    : 'Initial Catface Scar'}
+                  {activeRec.fireIntensity !== undefined &&
+                    ` · Intensity ${Math.round(activeRec.fireIntensity * 100)}%`}
+                </span>
+              </div>
+            )}
+            {(activeRec.climateProvenance !== undefined ||
+              (activeRec.volcanicAod !== undefined && activeRec.volcanicAod >= 0.12)) && (
+              <div className="ring-metric-row">
+                <span className="metric-label">Climate Record:</span>
+                <span className="metric-val">
+                  {formatProvenanceBadge(
+                    activeRec.climateProvenance,
+                    activeRec.isSyntheticClimate
+                  )}
+                  {activeRec.volcanicAod !== undefined &&
+                    activeRec.volcanicAod >= 0.12 &&
+                    ` · Volcanic AOD ${activeRec.volcanicAod.toFixed(2)}`}
+                </span>
+              </div>
+            )}
           </div>
 
           {traumaTags.length > 0 && (

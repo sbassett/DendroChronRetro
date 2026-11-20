@@ -9,12 +9,48 @@ export interface ClimateLandmark {
   year: number;
   shortLabel: string;
   fullName: string;
-  type: 'drought' | 'heat' | 'pluvial';
+  type: 'drought' | 'heat' | 'pluvial' | 'volcanic';
   description: string;
   matchesLocation: (lat: number, lon: number) => boolean;
 }
 
 export const CLIMATE_LANDMARKS: ClimateLandmark[] = [
+  {
+    year: 1580,
+    shortLabel: '’80s Megadrought',
+    fullName: '1580s Western North American Megadrought',
+    type: 'drought',
+    description:
+      'Severe multi-decade late-16th-century drought spanning the Southwest, Great Basin, and Northern Rockies in LBDA tree-ring records.',
+    matchesLocation: () => true,
+  },
+  {
+    year: 1783,
+    shortLabel: '’83 Laki',
+    fullName: '1783 Laki Volcanic Cooling',
+    type: 'volcanic',
+    description:
+      'Icelandic Laki fissure eruption injecting stratospheric sulfate aerosols across high northern latitudes, triggering severe summer cooling.',
+    matchesLocation: (lat) => lat > 35.0,
+  },
+  {
+    year: 1816,
+    shortLabel: '’16 Tambora',
+    fullName: '1816 Tambora "Year Without a Summer"',
+    type: 'volcanic',
+    description:
+      'Cataclysmic 1815 Mount Tambora eruption producing peak stratospheric aerosol cooling and traumatic subalpine frost-ring collapse in 1816.',
+    matchesLocation: () => true,
+  },
+  {
+    year: 1905,
+    shortLabel: '’05–20s Pluvial',
+    fullName: '1905–1920s Colorado River Pluvial',
+    type: 'pluvial',
+    description:
+      'Wettest multi-decadal interval in centuries across the Southwest and Colorado Plateau, forming the baseline for the 1922 Colorado River Compact.',
+    matchesLocation: (lat, lon) => lat < 43.0 && lon > -118.5,
+  },
   {
     year: 1977,
     shortLabel: '’77 Drought',
@@ -138,6 +174,14 @@ function getGeographicZoneName(lat: number, lon: number): string {
   // California Sierra Nevada
   if (lat >= 36.0 && lat <= 40.5 && lon >= -121.5 && lon <= -118.0) {
     return 'in the California Sierra Nevada';
+  }
+  // Santa Catalina Mountains (Southern Arizona Sky Islands)
+  if (lat >= 32.2 && lat <= 32.7 && lon >= -111.1 && lon <= -110.4) {
+    return 'in the Santa Catalina Mountains of Southern Arizona';
+  }
+  // Gila Wilderness / Mogollon Mountains (Southwestern New Mexico)
+  if (lat >= 33.0 && lat <= 33.7 && lon >= -109.0 && lon <= -108.0) {
+    return 'in the Gila Wilderness of New Mexico';
   }
   // Southwest General
   if (lat < 37.0 && lon > -114.0) {

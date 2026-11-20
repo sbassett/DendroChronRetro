@@ -1641,6 +1641,19 @@ body,
   flex-shrink: 0;
 }
 
+.time-nav-fire-pill {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 99px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  background: #fff7ed;
+  color: #9a3412;
+  border: 1px solid #fdba74;
+}
+
 .badge-pluvial {
   background: #ecfdf5;
   color: #065f46;
@@ -1727,6 +1740,18 @@ body,
   background: #8c8c86;
 }
 
+.chrono-bar.paleo {
+  background: #7c7468;
+}
+
+.chrono-bar.instrumental {
+  background: #525960;
+}
+
+.chrono-bar.era5 {
+  background: #4d5550;
+}
+
 .chrono-bar.drought {
   background: #1a1a1a;
 }
@@ -1805,6 +1830,34 @@ body,
 .landmark-chip.active .landmark-chip-dot,
 .landmark-chip:hover .landmark-chip-dot {
   background: #ffffff;
+}
+
+.landmark-chip.volcanic .landmark-chip-dot {
+  background: #3b5978;
+}
+
+.landmark-pin.volcanic .pin-flag {
+  color: #2c4a68;
+}
+
+.landmark-pin.volcanic .pin-stem {
+  background: #2c4a68;
+}
+
+.landmark-chip.fire .landmark-chip-dot {
+  background: #c2410c;
+}
+
+.landmark-pin.fire .pin-flag {
+  color: #9a3412;
+}
+
+.landmark-pin.fire .pin-stem {
+  background: #c2410c;
+}
+
+.chrono-bar.fire-scar {
+  background: #c2410c;
 }
 
 .chronology-landmark-banner {

@@ -6,6 +6,7 @@ import {
   computeFireScarGeometry,
   computeLocallyAbsentAttenuation,
   generateResinPocketGeometry,
+  smoothstep,
 } from './biologicalDisturbances';
 import { isPresetActive, RETROSPECTIVE_PRESETS } from './presets';
 import {
@@ -17,14 +18,22 @@ import {
 import { SPECIES_PROFILES, SpeciesProfile } from './species';
 import {
   AnnualRingRecord,
+  ClimateProvenance,
   EnvironmentDataset,
   type FireScarGeometry,
+  PolarPoint,
   PolarRingGeometry,
   type ResinPocketGeometry,
   SimulationParams,
   TreeSimulationResult,
   ViabilityAssessment,
 } from './types';
+import {
+  ActiveCatface,
+  evaluateTreeFireDamage,
+  simulateStandWildfires,
+  StandFireEvent,
+} from './wildfireModel';
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
@@ -176,12 +185,13 @@ export function simulateTreeCrossSection(
 
   // Active disturbance configuration (explicit params take precedence, fallback to matching preset)
   let disturbanceConfig = params.disturbance;
-  if (!disturbanceConfig) {
-    const matched = RETROSPECTIVE_PRESETS.find((p) => isPresetActive(p, params));
-    if (matched?.disturbance) {
-      disturbanceConfig = matched.disturbance;
-    }
+  const matchedPreset = RETROSPECTIVE_PRESETS.find((p) =>
+    isPresetActive(p, params)
+  );
+  if (!disturbanceConfig && matchedPreset?.disturbance) {
+    disturbanceConfig = matchedPreset.disturbance;
   }
+  const isWildfirePreset = matchedPreset?.id === 'wildfire-scar-healing';
 
   // Photoperiod vector for site latitude
   const gE = computeMonthlyPhotoperiod(params.latitude);
@@ -216,6 +226,9 @@ export function simulateTreeCrossSection(
     tempStressSum: number;
     moistStressSum: number;
     isSynthetic: boolean;
+    provenance?: ClimateProvenance;
+    volcanicAod?: number;
+    pmdi?: number;
   }
 
   const rawYearlyMetrics: YearlyGrowthMetrics[] = [];
@@ -298,6 +311,9 @@ export function simulateTreeCrossSection(
       tempStressSum,
       moistStressSum,
       isSynthetic: cy.isSynthetic,
+      provenance: cy.provenance,
+      volcanicAod: cy.volcanicAod,
+      pmdi: cy.pmdi,
     });
   }
 
@@ -353,6 +369,7 @@ export function simulateTreeCrossSection(
     tempStressSum: 0,
     moistStressSum: 0,
     isSynthetic: true,
+    provenance: 'synthetic',
   };
 
   for (let k = 1; k <= visibleRingCount; k++) {
@@ -402,8 +419,26 @@ export function simulateTreeCrossSection(
     const bioBaseMm =
       (wJuvMm / Math.sqrt(1 + baiRatio * baiRatio)) * senescenceDecay;
 
+    const isPresetFrostYear =
+      disturbanceConfig?.frostEventYears?.includes(calendarYear) ?? false;
+    const volcAod = ym.volcanicAod ?? 0;
+    const isColdSensitiveSite =
+      env.terrain.elevationM >= 1600 ||
+      env.meanAnnualTempC <= 7.5 ||
+      params.species === 'bristlecone-pine';
+    const hasFrostRing =
+      isPresetFrostYear || (volcAod >= 0.14 && isColdSensitiveSite);
+    const frostWidthMult =
+      hasFrostRing && (volcAod >= 0.14 || (isPresetFrostYear && isColdSensitiveSite))
+        ? 0.82
+        : 1.0;
+
     const meanWidthMm = clamp(
-      bioBaseMm * climateIndex * standMod * rngAnatomy.range(0.95, 1.05),
+      bioBaseMm *
+        climateIndex *
+        standMod *
+        frostWidthMult *
+        rngAnatomy.range(0.95, 1.05),
       0.12,
       9.2
     );
@@ -498,6 +533,10 @@ export function simulateTreeCrossSection(
       latewoodGray,
       isHeartwood,
       isSyntheticClimate: ym.isSynthetic,
+      climateProvenance: ym.provenance,
+      volcanicAod: ym.volcanicAod,
+      pmdi: ym.pmdi,
+      hasFrostRing,
     });
 
     currentMeanRadiusMm += meanWidthMm;
@@ -554,11 +593,38 @@ export function simulateTreeCrossSection(
     if (isDroughtAbsent) {
       rec.isLocallyAbsent = true;
     }
-
-    if (disturbanceConfig?.fireScarYear === rec.calendarYear) {
-      rec.hasFireScar = true;
-    }
   }
+
+  // Autonomous paleoclimate wildfire simulation (enabled on real multi-tier datasets or when explicitly requested)
+  const enableClimateWildfires =
+    disturbanceConfig?.enableClimateWildfires === true ||
+    (disturbanceConfig?.enableClimateWildfires !== false &&
+      (disturbanceConfig?.fireScarYear === undefined || isWildfirePreset) &&
+      (env.provenanceTiers?.length ?? 0) > 0);
+
+  const meanSummerTempC =
+    treeLifeMetrics.reduce((acc, x) => acc + x.summerTempC, 0) /
+    Math.max(1, treeLifeMetrics.length);
+
+  const standFireEvents: Map<number, StandFireEvent> = enableClimateWildfires
+    ? simulateStandWildfires({
+        yearlyClimate: treeLifeMetrics.map((m) => ({
+          year: m.year,
+          annualG: m.annualG,
+          summerMoistureG: m.summerMoistureG,
+          summerTempC: m.summerTempC,
+          pmdi: m.pmdi,
+        })),
+        species: params.species,
+        latitude: params.latitude,
+        longitude: params.longitude,
+        meanAnnualPrecipMm: env.meanAnnualPrecipMm,
+        elevationM: env.terrain.elevationM,
+        equatorwardExposure,
+        meanAnnualG,
+        meanSummerTempC,
+      })
+    : new Map();
 
   // Step 2: Build 2D Polar Cross-Section Geometry around eccentric pith
   const numAngles = 300;
@@ -566,6 +632,15 @@ export function simulateTreeCrossSection(
   for (let j = 0; j < numAngles; j++) {
     anglesRad.push((j / numAngles) * 2 * Math.PI);
   }
+  const twoPi = 2 * Math.PI;
+  const sampleRadiusAt = (radii: number[], theta: number): number => {
+    const norm = ((theta % twoPi) + twoPi) % twoPi;
+    const pos = (norm / twoPi) * numAngles;
+    const i0 = Math.floor(pos) % numAngles;
+    const i1 = (i0 + 1) % numAngles;
+    const f = pos - Math.floor(pos);
+    return radii[i0] * (1 - f) + radii[i1] * f;
+  };
 
   // Biomechanical lean direction: combines downhill slope vector + seeded prevailing wind vector
   // Convert compass azimuth (0=N, 90=E) to SVG/math polar angle where 0=+X(East), PI/2=+Y(South on screen)
@@ -631,13 +706,40 @@ export function simulateTreeCrossSection(
   const deltaPithFactor = 0.28;
   const fireScarsList: FireScarGeometry[] = [];
   const resinPocketsList: ResinPocketGeometry[] = [];
-  let fireScarPreRadii: number[] | null = null;
-  let fireScarActiveUphillRad = 0;
-  let fireScarActiveArcRad = 0;
+  const uphillCompass = (env.terrain.aspectDeg + 180) % 360;
+  const uphillScreenRad = compassToScreenRad(uphillCompass);
+  let activeCatface: ActiveCatface | null = null;
+  let lastClosedCatfaceYear: number | null = null;
 
   for (let idx = 0; idx < ringRecords.length; idx++) {
     const rec = ringRecords[idx];
     cumRadiusApprox += rec.meanWidthMm;
+
+    // Advance tangential woundwood callus closure across any open fire catface
+    if (activeCatface && !activeCatface.isClosed) {
+      const leftEdge = activeCatface.centerAngleRad - activeCatface.openHalfArcRad;
+      const rightEdge = activeCatface.centerAngleRad + activeCatface.openHalfArcRad;
+      const lipRadiusMm =
+        0.5 *
+        (sampleRadiusAt(prevOuterRadii, leftEdge) +
+          sampleRadiusAt(prevOuterRadii, rightEdge));
+      const advanceMm = rec.meanWidthMm * 0.75;
+      const dHalfArc = advanceMm / Math.max(15, lipRadiusMm);
+      activeCatface.openHalfArcRad = Math.max(
+        0,
+        activeCatface.openHalfArcRad - dHalfArc
+      );
+      if (activeCatface.openHalfArcRad <= 0.015) {
+        activeCatface.isClosed = true;
+        activeCatface.closedYear = rec.calendarYear;
+        activeCatface.openHalfArcRad = 0;
+        lastClosedCatfaceYear = rec.calendarYear;
+        for (const sIdx of activeCatface.scarIndices) {
+          fireScarsList[sIdx].healedYear = rec.calendarYear;
+          fireScarsList[sIdx].finalOpenArcRad = 0;
+        }
+      }
+    }
 
     // Root-buttress expression ramps up nonlinearly as tree base matures (> 25 mm radius)
     const rootExpression = clamp(
@@ -739,14 +841,34 @@ export function simulateTreeCrossSection(
         localWidth = Math.max(0.08, nominalWidth);
       }
 
-      // If fire occurred, in subsequent years inside the dead catface sector, expansion is zero
-      if (fireScarPreRadii && fireScarActiveArcRad > 0) {
-        const dUphill = Math.abs(angularDiff(theta, fireScarActiveUphillRad));
-        const yearsPostFire = rec.calendarYear - (disturbanceConfig?.fireScarYear ?? 0);
-        const decayFactor = 0.30 + 0.70 * Math.exp(-0.045 * Math.max(0, yearsPostFire));
-        const activeCatfaceHalfArc = (fireScarActiveArcRad * decayFactor) / 2;
-        if (dUphill <= activeCatfaceHalfArc) {
+      // If an open catface exists, zero cambial expansion on the dead xylem face
+      // and model hyperplastic inward-curling woundwood callus roll along its living margins.
+      if (activeCatface && !activeCatface.isClosed && activeCatface.openHalfArcRad > 0) {
+        const dFromCenter = Math.abs(angularDiff(theta, activeCatface.centerAngleRad));
+        if (dFromCenter <= activeCatface.openHalfArcRad) {
           localWidth = 0;
+        } else {
+          const distFromEdge = dFromCenter - activeCatface.openHalfArcRad;
+          const edgeRamp = smoothstep(0, 0.065, distFromEdge);
+          const woundwoodFlare =
+            1.0 + 0.38 * Math.exp(-Math.pow((distFromEdge - 0.095) / 0.11, 2));
+          localWidth *= edgeRamp * woundwoodFlare;
+        }
+      } else if (
+        activeCatface?.isClosed &&
+        activeCatface.closedYear !== undefined
+      ) {
+        const yearsClosed = Math.max(0, rec.calendarYear - activeCatface.closedYear);
+        if (yearsClosed <= 35) {
+          const dFromCenter = Math.abs(
+            angularDiff(theta, activeCatface.centerAngleRad)
+          );
+          const seamRidge =
+            1 +
+            0.12 *
+              Math.exp(-yearsClosed / 10) *
+              Math.exp(-Math.pow(dFromCenter / 0.1, 2));
+          localWidth *= seamRidge;
         }
       }
 
@@ -794,47 +916,118 @@ export function simulateTreeCrossSection(
       falseRingRadiusMm,
     });
 
-    // Capture fire scar geometry on the fire year
-    if (rec.hasFireScar && !fireScarPreRadii) {
-      fireScarPreRadii = outerRadiusMm.slice();
-      const uphillCompass = (env.terrain.aspectDeg + 180) % 360;
-      fireScarActiveUphillRad =
-        disturbanceConfig?.fireScarAzimuthRad ??
-        compassToScreenRad(uphillCompass);
-      fireScarActiveArcRad = disturbanceConfig?.fireScarArcRad ?? 0.85;
+    // Evaluate explicit fire scar OR paleoclimate stand-fire damage on ring idx
+    let scarCenterRad: number | null = null;
+    let scarHalfArcRad = 0;
+    let scarIsRescar = false;
+    let scarIntensity = 0.75;
 
-      const sampleIdx =
-        Math.floor(
-          (((fireScarActiveUphillRad % (2 * Math.PI)) + 2 * Math.PI) %
-            (2 * Math.PI) /
-            (2 * Math.PI)) *
-            numAngles
-        ) % numAngles;
-      const preRadiusAtUphill = fireScarPreRadii[sampleIdx];
+    if (disturbanceConfig?.fireScarYear === rec.calendarYear) {
+      const rawCenter =
+        disturbanceConfig.fireScarAzimuthRad ?? uphillScreenRad;
+      scarCenterRad = ((rawCenter % twoPi) + twoPi) % twoPi;
+      scarHalfArcRad = clamp(
+        (disturbanceConfig.fireScarArcRad ?? 0.85) / 2,
+        0.15,
+        0.92
+      );
+      scarIsRescar = Boolean(activeCatface && !activeCatface.isClosed);
+      scarIntensity = 0.78;
+    } else if (enableClimateWildfires) {
+      const standFire = standFireEvents.get(rec.calendarYear);
+      if (standFire) {
+        const meanRingWoodR =
+          outerRadiusMm.reduce((a, b) => a + b, 0) / outerRadiusMm.length;
+        const yearsSinceClosure =
+          lastClosedCatfaceYear !== null
+            ? rec.calendarYear - lastClosedCatfaceYear
+            : null;
+        const outcome = evaluateTreeFireDamage({
+          seedKey,
+          year: rec.calendarYear,
+          cambialAge: rec.cambialAge,
+          meanWoodRadiusMm: meanRingWoodR,
+          profile,
+          slopeDeg: env.terrain.slopeDeg,
+          uphillScreenRad,
+          windScreenRad,
+          standFire,
+          openCatface: activeCatface,
+          yearsSinceClosure,
+        });
+        if (outcome.scarred) {
+          scarCenterRad = outcome.centerAngleRad;
+          scarHalfArcRad = outcome.halfArcRad;
+          scarIsRescar = outcome.isRescar;
+          scarIntensity = outcome.intensity;
+        }
+      }
+    }
 
+    if (scarCenterRad !== null && scarHalfArcRad > 0) {
+      rec.hasFireScar = true;
+      rec.isFireRescar = scarIsRescar;
+      rec.fireIntensity = Number(scarIntensity.toFixed(2));
+
+      const scarIdx = fireScarsList.length;
+      if (activeCatface && !activeCatface.isClosed) {
+        activeCatface.centerAngleRad = scarCenterRad;
+        activeCatface.openHalfArcRad = scarHalfArcRad;
+        activeCatface.maxEverHalfArcRad = Math.max(
+          activeCatface.maxEverHalfArcRad,
+          scarHalfArcRad
+        );
+        activeCatface.scarIndices.push(scarIdx);
+      } else {
+        activeCatface = {
+          centerAngleRad: scarCenterRad,
+          openHalfArcRad: scarHalfArcRad,
+          maxEverHalfArcRad: scarHalfArcRad,
+          isClosed: false,
+          scarIndices: [scarIdx],
+        };
+      }
+
+      const numArcSamples = 40;
+      const scarArcPoints: PolarPoint[] = [];
+      for (let p = 0; p < numArcSamples; p++) {
+        const u = p / (numArcSamples - 1);
+        const thetaSample =
+          scarCenterRad - scarHalfArcRad + u * (2 * scarHalfArcRad);
+        scarArcPoints.push({
+          theta: thetaSample,
+          r: sampleRadiusAt(outerRadiusMm, thetaSample),
+        });
+      }
+
+      const centerR = sampleRadiusAt(outerRadiusMm, scarCenterRad);
       const scarGeom = computeFireScarGeometry(
         rec.calendarYear,
         params.deathYear,
-        preRadiusAtUphill,
-        fireScarActiveUphillRad,
-        fireScarActiveArcRad
+        centerR,
+        scarCenterRad,
+        scarHalfArcRad * 2
       );
+      scarGeom.scarArcPoints = scarArcPoints;
+      scarGeom.isRescar = scarIsRescar;
+      scarGeom.fireIntensity = scarIntensity;
+      scarGeom.centerAzimuthRad = scarCenterRad;
       fireScarsList.push(scarGeom);
 
-      // Traumatic resin pockets walled off in subsequent xylem
-      if (idx + 1 < ringRecords.length) {
+      // Traumatic resin pockets walled off along living wound margins
+      if (idx + 1 < ringRecords.length && resinPocketsList.length < 10) {
         const resin1 = generateResinPocketGeometry(
           idx + 1,
-          preRadiusAtUphill + 1.2,
+          centerR + 1.2,
           rec.meanWidthMm,
-          fireScarActiveUphillRad - fireScarActiveArcRad / 2 - 0.08,
+          scarCenterRad - scarHalfArcRad - 0.08,
           rngAnatomy
         );
         const resin2 = generateResinPocketGeometry(
           idx + 1,
-          preRadiusAtUphill + 1.4,
+          centerR + 1.4,
           rec.meanWidthMm,
-          fireScarActiveUphillRad + fireScarActiveArcRad / 2 + 0.08,
+          scarCenterRad + scarHalfArcRad + 0.08,
           rngAnatomy
         );
         resinPocketsList.push(resin1, resin2);
@@ -863,13 +1056,54 @@ export function simulateTreeCrossSection(
   const meanFinalWoodRadiusMm =
     finalWoodRadii.reduce((a, b) => a + b, 0) / finalWoodRadii.length;
 
+  const openCatfaceArcs: Array<{ centerAngleRad: number; halfArcRad: number }> =
+    [];
+  if (activeCatface) {
+    const finalOpenHalfArc = activeCatface.isClosed
+      ? 0
+      : activeCatface.openHalfArcRad;
+    const leftAngle = activeCatface.centerAngleRad - finalOpenHalfArc;
+    const rightAngle = activeCatface.centerAngleRad + finalOpenHalfArc;
+    const leftR = sampleRadiusAt(finalWoodRadii, leftAngle);
+    const rightR = sampleRadiusAt(finalWoodRadii, rightAngle);
+
+    if (!activeCatface.isClosed && finalOpenHalfArc > 0.02) {
+      openCatfaceArcs.push({
+        centerAngleRad: activeCatface.centerAngleRad,
+        halfArcRad: finalOpenHalfArc,
+      });
+    }
+
+    for (const sIdx of activeCatface.scarIndices) {
+      const sg = fireScarsList[sIdx];
+      const curlR = Math.max(
+        2.0,
+        Math.min(5.2, 2.2 + 0.11 * Math.max(0, params.deathYear - sg.year))
+      );
+      sg.finalOpenArcRad = Number((finalOpenHalfArc * 2).toFixed(4));
+      sg.callusMarginCoordinates = [
+        {
+          x: Number((leftR * Math.cos(leftAngle)).toFixed(2)),
+          y: Number((leftR * Math.sin(leftAngle)).toFixed(2)),
+          curlRadiusMm: curlR,
+        },
+        {
+          x: Number((rightR * Math.cos(rightAngle)).toFixed(2)),
+          y: Number((rightR * Math.sin(rightAngle)).toFixed(2)),
+          curlRadiusMm: curlR,
+        },
+      ];
+    }
+  }
+
   const bark = buildAnatomicalBarkGeometry(
     profile,
     finalWoodRadii,
     anglesRad,
     meanFinalWoodRadiusMm,
     rngBark,
-    polarRings
+    polarRings,
+    openCatfaceArcs
   );
 
   // Compute physical diameters across horizontal + perpendicular axes
@@ -884,6 +1118,10 @@ export function simulateTreeCrossSection(
     0.05,
     0.60
   );
+
+  const standFireYears = enableClimateWildfires
+    ? Array.from(standFireEvents.keys()).sort((a, b) => a - b)
+    : undefined;
 
   return {
     params,
@@ -911,5 +1149,6 @@ export function simulateTreeCrossSection(
     viability,
     fireScars: fireScarsList.length > 0 ? fireScarsList : undefined,
     resinPockets: resinPocketsList.length > 0 ? resinPocketsList : undefined,
+    standFireYears,
   };
 }

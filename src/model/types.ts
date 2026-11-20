@@ -8,6 +8,12 @@ export interface DisturbanceConfig {
   fireScarArcRad?: number;
   enableLocallyAbsent?: boolean;
   enableResinPockets?: boolean;
+  enableClimateWildfires?: boolean;
+}
+
+export interface PolarPoint {
+  theta: number;
+  r: number;
 }
 
 export interface FireScarGeometry {
@@ -16,6 +22,12 @@ export interface FireScarGeometry {
   catfaceArcEndRad: number;
   exposedWoodRadiusMm: number;
   callusMarginCoordinates: Array<{ x: number; y: number; curlRadiusMm: number }>;
+  scarArcPoints?: PolarPoint[];
+  isRescar?: boolean;
+  fireIntensity?: number;
+  healedYear?: number;
+  finalOpenArcRad?: number;
+  centerAzimuthRad?: number;
 }
 
 export interface ResinPocketGeometry {
@@ -51,20 +63,35 @@ export interface TerrainInfo {
   isWaterOrInvalid: boolean;
 }
 
+export type ClimateProvenance =
+  | 'reanalysis-merra2'
+  | 'reanalysis-era5'
+  | 'instrumental-nclimdiv'
+  | 'paleo-atlas'
+  | 'synthetic';
+
 export interface MonthlyClimateYear {
   year: number;
   /** 12 monthly mean temperatures in Celsius (Jan..Dec) */
   tempC: number[];
   /** 12 monthly precipitation totals in mm (Jan..Dec) */
   precipMm: number[];
-  /** True if synthesized via pre-1940 or fallback stochastic generator */
+  /** True if synthesized via fallback stochastic generator */
   isSynthetic: boolean;
+  /** Tier provenance for this calendar year */
+  provenance?: ClimateProvenance;
+  /** Growing-season stratospheric volcanic aerosol optical depth (SAOD at 550nm) */
+  volcanicAod?: number;
+  /** Summer (JJA) Palmer Modified Drought Index when available from paleoclimate atlas */
+  pmdi?: number;
 }
 
 export interface EnvironmentDataset {
   terrain: TerrainInfo;
   years: MonthlyClimateYear[];
   source: 'nasa-power-merra2' | 'open-meteo-era5' | 'offline-climatology';
+  hasHistoricalLayers?: boolean;
+  provenanceTiers?: ClimateProvenance[];
   meanAnnualTempC: number;
   meanAnnualPrecipMm: number;
   summerPrecipShare: number;
@@ -88,11 +115,17 @@ export interface AnnualRingRecord {
   latewoodGray: number; // 0..255
   isHeartwood: boolean;
   isSyntheticClimate: boolean;
+  climateProvenance?: ClimateProvenance;
+  volcanicAod?: number;
+  pmdi?: number;
+  hasFrostRing?: boolean;
   // Milestone 2 Biological additions:
   relativeWidthIndex?: number;
   isLocallyAbsent?: boolean;
   absentArc?: { startAngleRad: number; endAngleRad: number };
   hasFireScar?: boolean;
+  isFireRescar?: boolean;
+  fireIntensity?: number;
   transition1Gray?: number;
   transition2Gray?: number;
   densityGradient?: DensityGradientParams;
@@ -116,11 +149,6 @@ export interface PolarRingGeometry {
   falseRingRadiusMm?: number[];
   /** Optional locally absent mask across angles (0 = dead/absent, 1 = normal) */
   locallyAbsentMask?: number[];
-}
-
-export interface PolarPoint {
-  theta: number;
-  r: number;
 }
 
 export interface BarkGeometry {
@@ -185,4 +213,5 @@ export interface TreeSimulationResult {
   viability: ViabilityAssessment;
   fireScars?: FireScarGeometry[];
   resinPockets?: ResinPocketGeometry[];
+  standFireYears?: number[];
 }

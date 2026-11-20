@@ -340,7 +340,7 @@ export function generateColophonFooter(
     `<text x="${col3X.toFixed(2)}" y="${curY.toFixed(2)}" fill="${colors.textColorDim}" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="${m.fontSizeSmall.toFixed(2)}" font-weight="700" letter-spacing="0.08em">III. ECOLOGICAL LEDGER</text>`,
     `<text x="${col3X.toFixed(2)}" y="${(curY + m.fontSizeBody * 1.25).toFixed(2)}" fill="${colors.textColor}" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="${m.fontSizeBody.toFixed(2)}" font-weight="600">Specimen Seed #${sim.seedHex}</text>`,
     `<text x="${col3X.toFixed(2)}" y="${(curY + m.fontSizeBody * 2.35).toFixed(2)}" fill="${colors.textColorMid}" font-family="Georgia, serif" font-size="${m.fontSizeBody.toFixed(2)}">Limiting Stress: ${escapeXml(sim.viability?.summary ?? 'Climatic Precipitation')}</text>`,
-    `<text x="${col3X.toFixed(2)}" y="${(curY + m.fontSizeBody * 3.45).toFixed(2)}" fill="${colors.textColorDim}" font-family="Georgia, serif" font-size="${m.fontSizeBody.toFixed(2)}">Biophysical VS-Lite &amp; PRISM Climatology</text>`,
+    `<text x="${col3X.toFixed(2)}" y="${(curY + m.fontSizeBody * 3.45).toFixed(2)}" fill="${colors.textColorDim}" font-family="Georgia, serif" font-size="${m.fontSizeBody.toFixed(2)}">VS-Lite · MERRA-2, ERA5, nClimDiv &amp; LBDA</text>`,
     `<text x="${col3X.toFixed(2)}" y="${(curY + m.fontSizeBody * 4.45).toFixed(2)}" fill="${colors.textColorDim}" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="${m.fontSizeSmall.toFixed(2)}">Anatomical Tree Ring Archive</text>`,
   ];
 

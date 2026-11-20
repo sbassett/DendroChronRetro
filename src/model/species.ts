@@ -262,4 +262,20 @@ export const LOCATION_PRESETS: LocationPreset[] = [
     recommendedSpecies: 'douglas-fir',
     note: 'Cold interior montane climate; shorter growing seasons and tighter radial increments.',
   },
+  {
+    name: 'Santa Catalina Mts (Mt. Lemmon)',
+    region: 'Southern Arizona',
+    latitude: 32.4344,
+    longitude: -110.77,
+    recommendedSpecies: 'ponderosa-pine',
+    note: 'Steep Sky Island fire-history site (Baisan & Swetnam); multi-century stacked uphill fire scars, 20th-century healing, and an active modern catface.',
+  },
+  {
+    name: 'Gila Wilderness (Gilita Ridge)',
+    region: 'Southwestern New Mexico',
+    latitude: 33.405,
+    longitude: -108.582,
+    recommendedSpecies: 'ponderosa-pine',
+    note: 'Swetnam & Dieterich classic continuous-fire wilderness stand; vigorous rings with a continuously open multi-scar recorder catface spanning 1863–2009.',
+  },
 ];

@@ -286,7 +286,12 @@ export const App: React.FC = () => {
 
   // Fetch environmental & historical climate data when location or year span is not yet cached
   useEffect(() => {
-    if (syncCachedEnv && syncCachedEnv.source === 'nasa-power-merra2') {
+    const needsHistorical = startYear - 1 < 1981;
+    if (
+      syncCachedEnv &&
+      syncCachedEnv.source !== 'offline-climatology' &&
+      (!needsHistorical || syncCachedEnv.hasHistoricalLayers)
+    ) {
       setLoadingEnv(false);
       return;
     }

@@ -250,6 +250,18 @@ export const TimeNavigation: React.FC<TimeNavigationProps> = ({
       </div>
 
       {/* Ring Ecological Readout Pill */}
+      {activeRecord?.hasFireScar && (
+        <div
+          className="time-nav-fire-pill"
+          title={
+            activeRecord.isFireRescar
+              ? 'Open-catface recorder-tree re-scar'
+              : 'Cambial wildfire scar recorded in this ring'
+          }
+        >
+          {activeRecord.isFireRescar ? 'Fire Re-Scar' : 'Fire Scar'}
+        </div>
+      )}
       {rwiBadge && (
         <div className={`time-nav-rwi-pill ${rwiBadge.tagClass}`}>
           {rwiBadge.label}

@@ -4,8 +4,14 @@ import {
   getDisturbanceTraumaTags,
   getRwiInspectionInfo,
 } from '../src/components/SvgViewport';
+import {
+  buildAnatomicalBarkAtRing,
+  createBarkEvolutionContext,
+} from '../src/model/barkModel';
 import { simulateTreeCrossSection } from '../src/model/growthEngine';
 import { getPresetById, RETROSPECTIVE_PRESETS } from '../src/model/presets';
+import { SeededRNG } from '../src/model/prng';
+import { SPECIES_PROFILES } from '../src/model/species';
 import {
   generateCrossSectionSvgBundle,
   getSimSvgCache,
@@ -121,11 +127,129 @@ describe('Time Navigation, Ring Inspection & Slicing Engine (R3)', () => {
         `data-ring="${sim.visibleRingCount}"`
       );
 
-      // When sliced to historical interior, outer mature bark is peeled away
-      expect(slicedBundle.innerMarkup).not.toContain('id="bark-layer"');
+      // Evolving outer bark stays visible when showBark: true and reflects the younger historical trunk
+      expect(slicedBundle.innerMarkup).toContain('id="bark-layer"');
+      const fullBundle = generateCrossSectionSvgBundle(sim, {
+        showBark: true,
+        showMedullaryRays: true,
+        showAnnotations: true,
+        transparentBackground: false,
+      });
+      const slicedBark =
+        slicedBundle.innerMarkup.match(
+          /<g id="bark-layer">[\s\S]*?(?=<g id="annual-rings")/
+        )?.[0] ?? '';
+      const fullBark =
+        fullBundle.innerMarkup.match(
+          /<g id="bark-layer">[\s\S]*?(?=<g id="annual-rings")/
+        )?.[0] ?? '';
+      expect(slicedBark.length).toBeGreaterThan(0);
+      expect(slicedBark).not.toBe(fullBark);
+
+      // Explicit showBark: false hides bark layer on sliced views
+      const slicedNoBark = generateCrossSectionSvgBundle(sim, {
+        showBark: false,
+        showMedullaryRays: true,
+        showAnnotations: true,
+        transparentBackground: false,
+        maxRenderedRingIndex: targetRing,
+      });
+      expect(slicedNoBark.innerMarkup).not.toContain('id="bark-layer"');
 
       // Subtext reflects historical moment
       expect(slicedBundle.innerMarkup).toContain(`Ring #${targetRing}`);
+    });
+
+    it('evolves bark smoothly across rings, converges at maturity, and pinches across open fire catfaces', () => {
+      const ctx = createBarkEvolutionContext(
+        SPECIES_PROFILES[sim.params.species],
+        sim.anglesRad,
+        sim.rings,
+        new SeededRNG(sim.seedKey).fork('bark')
+      );
+
+      const earlyBark = buildAnatomicalBarkAtRing(ctx, 1);
+      const midRing = Math.floor(sim.visibleRingCount / 2);
+      const midBark = buildAnatomicalBarkAtRing(ctx, midRing);
+      const finalBark = buildAnatomicalBarkAtRing(ctx, sim.visibleRingCount);
+
+      const mean = (arr: number[]) =>
+        arr.reduce((sum, v) => sum + v, 0) / arr.length;
+
+      expect(mean(earlyBark.outerBarkRadiusMm)).toBeLessThan(
+        mean(midBark.outerBarkRadiusMm)
+      );
+      expect(mean(midBark.outerBarkRadiusMm)).toBeLessThan(
+        mean(finalBark.outerBarkRadiusMm)
+      );
+      expect(earlyBark.meanThicknessMm).toBeLessThan(midBark.meanThicknessMm);
+      expect(midBark.meanThicknessMm).toBeLessThan(finalBark.meanThicknessMm);
+
+      // Final ring evaluation without open catface matches unscarred/closed simulation within numerical precision,
+      // and with final openCatfaceArc matches sim.bark identically
+      const lastOpenCatface = sim.rings[sim.rings.length - 1].openCatfaceArc;
+      const finalMatchedBark = buildAnatomicalBarkAtRing(
+        ctx,
+        sim.visibleRingCount,
+        {
+          openCatfaceArcs: lastOpenCatface ? [lastOpenCatface] : undefined,
+        }
+      );
+      let maxDiff = 0;
+      for (let i = 0; i < sim.bark.outerBarkRadiusMm.length; i++) {
+        maxDiff = Math.max(
+          maxDiff,
+          Math.abs(
+            finalMatchedBark.outerBarkRadiusMm[i] -
+              sim.bark.outerBarkRadiusMm[i]
+          )
+        );
+      }
+      expect(maxDiff).toBeLessThan(0.01);
+
+      // Fire scar catface removes living phloem & outer bark across the killed cambium arc right at scar year
+      const fireRing = sim.rings.find((r) => r.record.calendarYear === 1910)!;
+      expect(fireRing).toBeDefined();
+      expect(fireRing.openCatfaceArc).toBeDefined();
+      const preFireIdx = fireRing.record.ringIndex - 1;
+      const preFireRing = sim.rings[preFireIdx - 1];
+      expect(preFireRing.openCatfaceArc).toBeUndefined();
+
+      const catfaceAngle = fireRing.openCatfaceArc!.centerAngleRad;
+      const sampleAt = (arr: number[], theta: number) => {
+        const twoPi = 2 * Math.PI;
+        const pos = ((((theta % twoPi) + twoPi) % twoPi) / twoPi) * arr.length;
+        const i0 = Math.floor(pos) % arr.length;
+        const i1 = (i0 + 1) % arr.length;
+        const f = pos - Math.floor(pos);
+        return arr[i0] * (1 - f) + arr[i1] * f;
+      };
+
+      const barkBeforeFire = buildAnatomicalBarkAtRing(ctx, preFireIdx);
+      const thickBeforeFire =
+        sampleAt(barkBeforeFire.outerBarkRadiusMm, catfaceAngle) -
+        sampleAt(preFireRing.outerRadiusMm, catfaceAngle);
+      expect(thickBeforeFire).toBeGreaterThan(0.5);
+
+      const barkAtFire = buildAnatomicalBarkAtRing(
+        ctx,
+        fireRing.record.ringIndex,
+        { openCatfaceArcs: [fireRing.openCatfaceArc!] }
+      );
+      const thickAtFireCenter =
+        sampleAt(barkAtFire.outerBarkRadiusMm, catfaceAngle) -
+        sampleAt(fireRing.outerRadiusMm, catfaceAngle);
+      expect(thickAtFireCenter).toBeLessThan(0.05);
+
+      // SVG slice at fireRing renders #bark-layer cleanly
+      const fireSliceSvg = generateCrossSectionSvgBundle(sim, {
+        showBark: true,
+        showMedullaryRays: false,
+        showAnnotations: false,
+        transparentBackground: false,
+        maxRenderedRingIndex: fireRing.record.ringIndex,
+      });
+      expect(fireSliceSvg.innerMarkup).toContain('id="bark-layer"');
     });
 
     it('executes 100 consecutive vector ring slices with average latency well under 15ms (< 3ms)', () => {

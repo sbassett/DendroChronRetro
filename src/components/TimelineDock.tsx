@@ -56,6 +56,7 @@ export const TimelineDock: React.FC<TimelineDockProps> = ({
   const [showChronoChart, setShowChronoChart] = useState<boolean>(true);
   const clampedRing = Math.max(1, Math.min(totalRings, activeRingIndex));
   const activeYear = activeRecord?.calendarYear ?? firstYear + (clampedRing - 1);
+  const lastRingYear = totalRings > 0 ? firstYear + totalRings - 1 : deathYear;
   const isPeeled = clampedRing < totalRings;
 
   return (
@@ -73,7 +74,7 @@ export const TimelineDock: React.FC<TimelineDockProps> = ({
           <span className="timeline-pill-meta mono">
             {isPlaying || isPeeled
               ? `${activeYear} CE · #${clampedRing}/${totalRings}`
-              : `${firstYear}–${deathYear} CE`}
+              : `${firstYear}–${lastRingYear} CE`}
           </span>
           {isPlaying && <span className="timeline-live-dot" aria-hidden="true" />}
           <ChevronUp size={13} aria-hidden="true" />

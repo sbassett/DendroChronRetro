@@ -45,10 +45,13 @@ export const TimeNavigation: React.FC<TimeNavigationProps> = ({
   className = '',
 }) => {
   const clampedRing = Math.max(1, Math.min(totalRings, activeRingIndex));
+  const isPeeled = clampedRing < totalRings;
+  const lastRingYear =
+    totalRings > 0 ? firstYear + totalRings - 1 : deathYear;
   const activeYear =
     activeRecord?.calendarYear ?? firstYear + (clampedRing - 1);
   const activeTreeAge = activeRecord?.treeAge ?? clampedRing;
-  const yearsPeeled = Math.max(0, deathYear - activeYear);
+  const yearsPeeled = Math.max(0, totalRings - clampedRing);
 
   // Keyboard shortcut listener for Left / Right arrow ring stepping
   useEffect(() => {
@@ -134,7 +137,7 @@ export const TimeNavigation: React.FC<TimeNavigationProps> = ({
           aria-checked={mode === 'peel'}
           className={`time-nav-mode-btn ${mode === 'peel' ? 'active' : ''}`}
           onClick={() => onModeChange('peel')}
-          title="Peel Mode: Peel away outer rings in reverse chronology to shrink trunk extent to that historical moment"
+          title="Peel Mode: Peel back outer rings and bark in reverse chronology to view the historical trunk and bark at that moment"
         >
           <Layers size={13} aria-hidden="true" />
           <span>Peel Mode</span>
@@ -145,7 +148,7 @@ export const TimeNavigation: React.FC<TimeNavigationProps> = ({
           aria-checked={mode === 'grow'}
           className={`time-nav-mode-btn ${mode === 'grow' ? 'active' : ''}`}
           onClick={() => onModeChange('grow')}
-          title="Grow Mode: Forward biological progression from pith germination outward to outer cambium"
+          title="Grow Mode: Forward biological progression of rings and evolving outer bark from pith germination outward"
         >
           <Clock size={13} aria-hidden="true" />
           <span>Grow Mode</span>
@@ -196,7 +199,7 @@ export const TimeNavigation: React.FC<TimeNavigationProps> = ({
           type="button"
           className="time-nav-btn"
           onClick={handleJumpEnd}
-          title="Jump to Outer Cambium"
+          title="Jump to Full Tree (Mature)"
           aria-label="Jump to end"
         >
           <SkipForward size={14} />
@@ -227,13 +230,15 @@ export const TimeNavigation: React.FC<TimeNavigationProps> = ({
           <div className="slider-current-callout">
             <span className="current-year-mono">{activeYear} CE</span>
             <span className="current-ring-tag">
-              {mode === 'peel'
+              {!isPeeled
+                ? `Full Tree · ${totalRings} rings`
+                : mode === 'peel'
                 ? `Peeled -${yearsPeeled}y · Ring #${clampedRing}/${totalRings}`
                 : `Ring #${clampedRing} of ${totalRings} (${activeTreeAge}y)`}
             </span>
           </div>
           <span className="slider-endpoint">
-            {deathYear} CE (Cambium)
+            {lastRingYear} CE (Mature)
           </span>
         </div>
 

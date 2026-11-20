@@ -1,5 +1,6 @@
 import React from 'react';
 import { ChevronUp, MapPin, Pencil, X } from 'lucide-react';
+import { SpecimenHighlight } from '../model/narrative';
 import { PaletteDefinition } from '../model/palettes';
 import { PaletteId } from '../model/permalink';
 import { RetrospectivePreset } from '../model/presets';
@@ -45,6 +46,12 @@ export interface MobileSheetProps {
     lon: number,
     recommendedSpecies: SpeciesId
   ) => void;
+  onSelectPlace?: (
+    lat: number,
+    lon: number,
+    displayLabel: string,
+    recommendedSpecies?: SpeciesId
+  ) => void;
   totalAge: number;
   overrideDeathYear: boolean;
   customDeathYear: number;
@@ -55,6 +62,11 @@ export interface MobileSheetProps {
   onCustomDeathYearChange: (year: number) => void;
   activePresetId: string | null;
   onSelectPreset: (preset: RetrospectivePreset) => void;
+  specimenLede?: string | null;
+  highlights?: SpecimenHighlight[];
+  peeledRingIndex?: number | null;
+  pinnedRing?: number | null;
+  onJumpToLandmark?: (ringIndex: number | null) => void;
   simulation: TreeSimulationResult | null;
   story: string | null;
   viabilityDetail: string | null;
@@ -113,6 +125,7 @@ export const MobileSheet: React.FC<MobileSheetProps> = ({
   onCommitCoords,
   onSelectMapLocation,
   onSelectReferenceSite,
+  onSelectPlace,
   totalAge,
   overrideDeathYear,
   customDeathYear,
@@ -123,6 +136,11 @@ export const MobileSheet: React.FC<MobileSheetProps> = ({
   onCustomDeathYearChange,
   activePresetId,
   onSelectPreset,
+  specimenLede,
+  highlights,
+  peeledRingIndex,
+  pinnedRing,
+  onJumpToLandmark,
   simulation,
   story,
   viabilityDetail,
@@ -280,6 +298,7 @@ export const MobileSheet: React.FC<MobileSheetProps> = ({
                       onCommitCoords={onCommitCoords}
                       onSelectMapLocation={onSelectMapLocation}
                       onSelectReferenceSite={onSelectReferenceSite}
+                      onSelectPlace={onSelectPlace}
                     />
                   </section>
 
@@ -336,6 +355,47 @@ export const MobileSheet: React.FC<MobileSheetProps> = ({
                       </button>
                     </div>
                   </section>
+
+                  {specimenLede && (
+                    <section className="drawer-section">
+                      <p className="hud-specimen-lede">{specimenLede}</p>
+                      {highlights && highlights.length > 0 && onJumpToLandmark && (
+                        <div className="hud-landmark-chips" role="group" aria-label="Inspect milestone rings">
+                          {highlights.slice(0, 5).map((h) => {
+                            const isActive = pinnedRing === h.ringIndex;
+                            return (
+                              <button
+                                key={h.id}
+                                type="button"
+                                className={`landmark-jump-chip type-${h.type} ${isActive ? 'active' : ''}`}
+                                onClick={() => {
+                                  onJumpToLandmark(h.ringIndex);
+                                  onClose();
+                                }}
+                              >
+                                {h.chipLabel}
+                              </button>
+                            );
+                          })}
+                          {((peeledRingIndex !== null && peeledRingIndex !== undefined) ||
+                            (pinnedRing !== null && pinnedRing !== undefined)) && (
+                            <button
+                              type="button"
+                              className="landmark-jump-chip reset"
+                              onClick={() => {
+                                onJumpToLandmark(null);
+                                onClose();
+                              }}
+                            >
+                              {peeledRingIndex !== null && peeledRingIndex !== undefined
+                                ? 'Full Tree'
+                                : 'Clear'}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </section>
+                  )}
 
                   <LedgerTelemetryPanel
                     simulation={simulation}

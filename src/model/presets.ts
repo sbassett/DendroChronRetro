@@ -205,7 +205,7 @@ export const RETROSPECTIVE_PRESETS: RetrospectivePreset[] = [
     name: 'Wildfire Scarring & Cambial Healing',
     subtitle: 'Thermal Necrosis Catface & Decadal Woundwood Roll (East Cascades, OR)',
     description:
-      'Model the biophysical impact of a catastrophic dry-season crown fire. On the uphill lee side, aerodynamic heat pooling causes localized thermal necrosis of the cambium, exposing heartwood in an 80° catface scar. Over subsequent decades, living cambial margins roll inward to deposit curved woundwood callus curls.',
+      'Model the biophysical impact of a recurring dry-season surface fire. On the uphill lee side, aerodynamic heat pooling causes localized thermal necrosis of the cambium without killing the mature tree, exposing wood in an 80° catface scar. Over subsequent decades, living cambial margins roll inward to deposit curved woundwood callus curls.',
     coordinates: {
       latitude: 44.4622,
       longitude: -121.6358,

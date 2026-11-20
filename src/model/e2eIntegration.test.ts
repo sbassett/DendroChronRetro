@@ -941,7 +941,7 @@ describe('XYLEM E2E Integration Suite', () => {
       it('T1_F14_3: social preview graphic metadata references 1200x630 asset', () => {
         const htmlPath = path.resolve(process.cwd(), 'index.html');
         const htmlContent = fs.readFileSync(htmlPath, 'utf-8');
-        expect(htmlContent).toContain('content="./og-preview.png"');
+        expect(htmlContent).toContain('content="https://xylem.art/og-preview.png"');
       });
 
       it('T1_F14_4: responsive mobile viewport configuration is defined', () => {
@@ -2224,7 +2224,7 @@ describe('XYLEM E2E Integration Suite', () => {
       const html = fs.readFileSync(htmlPath, 'utf-8');
       expect(html).toContain('<meta property="og:title" content="XYLEM: An Ecological Ledger of Deep Time — Retrospective Dendrochronology"');
       expect(html).toContain('<meta property="og:description"');
-      expect(html).toContain('<meta property="og:image" content="./og-preview.png"');
+      expect(html).toContain('<meta property="og:image" content="https://xylem.art/og-preview.png"');
       expect(html).toContain('<meta name="twitter:card" content="summary_large_image"');
       expect(html).toContain('<meta name="twitter:title" content="XYLEM: An Ecological Ledger of Deep Time — Retrospective Dendrochronology"');
       expect(html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1.0"');

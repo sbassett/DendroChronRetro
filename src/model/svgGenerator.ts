@@ -1,4 +1,9 @@
 import {
+  BarkEvolutionContext,
+  buildAnatomicalBarkAtRing,
+  createBarkEvolutionContext,
+} from './barkModel';
+import {
   LOCATOR_MAP_HEIGHT,
   LOCATOR_MAP_WIDTH,
   NA_GREAT_LAKES_PATH,
@@ -6,6 +11,7 @@ import {
   projectToLocatorMap,
   SPECIES_NATIVE_RANGE_PATH,
 } from './locatorMapData';
+import { extractSpecimenHighlights, SpecimenHighlight } from './narrative';
 import {
   blendHex,
   DEFAULT_PALETTE_ID,
@@ -20,7 +26,7 @@ import {
   TextureFilterOptions,
   WOOD_GRAIN_FILTER_ID,
 } from './textureFilters';
-import { PolarPoint, TreeSimulationResult } from './types';
+import { BarkGeometry, PolarPoint, TreeSimulationResult } from './types';
 import {
   chooseScaleBar,
   formatStumpHeightShort,
@@ -149,6 +155,261 @@ function polarPointsPath(points: PolarPoint[], closed: boolean): string {
   return parts.join('');
 }
 
+function normalizeAnglePi(theta: number): number {
+  const twoPi = 2 * Math.PI;
+  let a = ((theta % twoPi) + twoPi) % twoPi;
+  if (a > Math.PI) a -= twoPi;
+  return a;
+}
+
+function samplePolarRadiusAt(radii: number[], theta: number): number {
+  const n = radii.length;
+  if (n === 0) return 0;
+  const twoPi = 2 * Math.PI;
+  const norm = ((theta % twoPi) + twoPi) % twoPi;
+  const pos = (norm / twoPi) * n;
+  const i0 = Math.floor(pos) % n;
+  const i1 = (i0 + 1) % n;
+  const frac = pos - Math.floor(pos);
+  return radii[i0] * (1 - frac) + radii[i1] * frac;
+}
+
+function escapeXmlText(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+interface CalloutDraft {
+  highlight: SpecimenHighlight;
+  side: 'left' | 'right';
+  ax: number;
+  ay: number;
+  ly: number;
+  maxSideR: number;
+}
+
+const CALLOUT_FLANK_SLOTS = [-0.26, 2.86, 0.34, -2.86, 0.72, 2.42, -0.52, -2.52];
+
+function spaceCalloutSideY(
+  items: CalloutDraft[],
+  safeTop: number,
+  safeBottom: number,
+  minGap: number
+): void {
+  if (items.length === 0) return;
+  items.sort((a, b) => a.ly - b.ly);
+  const effectiveGap =
+    items.length > 1
+      ? Math.min(minGap, Math.max(8, (safeBottom - safeTop) / (items.length - 0.5)))
+      : minGap;
+  items[0].ly = Math.max(
+    safeTop,
+    Math.min(safeBottom - (items.length - 1) * effectiveGap, items[0].ly)
+  );
+  for (let i = 1; i < items.length; i++) {
+    items[i].ly = Math.max(items[i].ly, items[i - 1].ly + effectiveGap);
+  }
+  if (items[items.length - 1].ly > safeBottom) {
+    items[items.length - 1].ly = safeBottom;
+    for (let i = items.length - 2; i >= 0; i--) {
+      items[i].ly = Math.min(items[i].ly, items[i + 1].ly - effectiveGap);
+    }
+  }
+}
+
+function buildRingCalloutsMarkup(args: {
+  sim: TreeSimulationResult;
+  highlights: SpecimenHighlight[];
+  visibleOuterRadii: number[];
+  layout: CachedViewBoxLayout;
+  palette: PaletteDefinition;
+  transparentBackground: boolean;
+  showLocator: boolean;
+  showCaption: boolean;
+  compBottomY: number;
+}): string {
+  const {
+    sim,
+    highlights,
+    visibleOuterRadii,
+    layout,
+    palette,
+    transparentBackground,
+    showLocator,
+    showCaption,
+    compBottomY,
+  } = args;
+  const { vbX, vbY, vbW, vbH, pad, maxSpan, locY, locH } = layout;
+
+  const yearFont = maxSpan * 0.0175;
+  const subFont = maxSpan * 0.0148;
+  const leaderW = Math.max(0.24, maxSpan * 0.00155);
+  const dotR = Math.max(0.55, maxSpan * 0.0042);
+
+  // Measure outer extent on left and right sides so shelves never enter wood/bark
+  let maxRightR = 0;
+  let maxLeftR = 0;
+  const nOuter = visibleOuterRadii.length;
+  for (let i = 0; i < nOuter; i++) {
+    const r = visibleOuterRadii[i];
+    if (i <= nOuter * 0.25 || i >= nOuter * 0.75) {
+      if (r > maxRightR) maxRightR = r;
+    } else if (r > maxLeftR) {
+      maxLeftR = r;
+    }
+  }
+  const fallbackMaxR = Math.max(maxRightR, maxLeftR, maxSpan * 0.45);
+  maxRightR = maxRightR || fallbackMaxR;
+  maxLeftR = maxLeftR || fallbackMaxR;
+
+  const safeTopLeft = showLocator
+    ? Math.max(vbY + pad * 0.85, locY + locH + yearFont * 2.1)
+    : vbY + pad * 0.85;
+  const safeTopRight = Math.max(vbY + pad * 0.85, compBottomY + yearFont * 2.1);
+  const safeBottom =
+    vbY + vbH - (showCaption ? pad * 1.1 + yearFont * 2.0 : pad * 0.85);
+  if (safeBottom <= safeTopLeft + yearFont || safeBottom <= safeTopRight + yearFont) {
+    return '';
+  }
+
+  // Prioritize fixed-angle fire scars before picking open flank slots for climate landmarks
+  const ordered = [...highlights].sort((a, b) => {
+    const aFixed = a.preferredAngleRad !== undefined ? 0 : 1;
+    const bFixed = b.preferredAngleRad !== undefined ? 0 : 1;
+    if (aFixed !== bFixed) return aFixed - bFixed;
+    return a.year - b.year;
+  });
+
+  const takenAngles: number[] = [];
+  const drafts: CalloutDraft[] = [];
+  let leftCount = 0;
+  let rightCount = 0;
+
+  for (const h of ordered) {
+    const ring = sim.rings[h.ringIndex - 1];
+    if (!ring) continue;
+
+    let theta: number;
+    if (h.preferredAngleRad !== undefined) {
+      theta = normalizeAnglePi(h.preferredAngleRad);
+    } else {
+      let chosenSlot: number | undefined;
+      let bestScore = Infinity;
+      for (const slot of CALLOUT_FLANK_SLOTS) {
+        const collides = takenAngles.some(
+          (t) => Math.abs(normalizeAnglePi(slot - t)) < 0.34
+        );
+        if (collides) continue;
+        const slotSideCount = Math.cos(slot) >= 0 ? rightCount : leftCount;
+        const score = slotSideCount * 2;
+        if (score < bestScore) {
+          bestScore = score;
+          chosenSlot = slot;
+        }
+      }
+      if (chosenSlot === undefined) {
+        chosenSlot = rightCount <= leftCount ? 0.15 : Math.PI - 0.15;
+      }
+      theta = chosenSlot;
+    }
+
+    takenAngles.push(theta);
+    const ringR = samplePolarRadiusAt(ring.outerRadiusMm, theta);
+    const ax = ringR * Math.cos(theta);
+    const ay = ringR * Math.sin(theta);
+
+    let side: 'left' | 'right' = Math.cos(theta) >= 0 ? 'right' : 'left';
+    if (
+      h.preferredAngleRad !== undefined &&
+      Math.abs(Math.cos(theta)) < 0.28 &&
+      showLocator &&
+      ay < 0
+    ) {
+      side = 'right';
+    }
+
+    if (side === 'right') rightCount++;
+    else leftCount++;
+
+    const sideSafeTop = side === 'left' ? safeTopLeft : safeTopRight;
+    const targetBarkR = samplePolarRadiusAt(visibleOuterRadii, theta);
+    const naturalY =
+      Math.abs(Math.cos(theta)) >= 0.32
+        ? (targetBarkR + maxSpan * 0.04) * Math.sin(theta)
+        : ay < 0
+        ? sideSafeTop + yearFont * 0.6
+        : safeBottom - yearFont * 1.4;
+
+    drafts.push({
+      highlight: h,
+      side,
+      ax,
+      ay,
+      ly: Math.max(sideSafeTop, Math.min(safeBottom, naturalY)),
+      maxSideR: side === 'right' ? maxRightR : maxLeftR,
+    });
+  }
+
+  const leftDrafts = drafts.filter((d) => d.side === 'left');
+  const rightDrafts = drafts.filter((d) => d.side === 'right');
+  const minGap = yearFont * 3.15;
+  spaceCalloutSideY(leftDrafts, safeTopLeft, safeBottom, minGap);
+  spaceCalloutSideY(rightDrafts, safeTopRight, safeBottom, minGap);
+
+  const labelAllowance = maxSpan * 0.145;
+  const xBoundLeft = vbX + maxSpan * 0.022;
+  const xBoundRight = vbX + vbW - maxSpan * 0.022;
+  const haloAttr = !transparentBackground
+    ? ` stroke="${palette.background}" stroke-width="${(yearFont * 0.34).toFixed(2)}" stroke-linejoin="round" paint-order="stroke"`
+    : '';
+
+  const lines: string[] = [`<g id="ring-callouts" pointer-events="none">`];
+
+  for (const d of [...leftDrafts, ...rightDrafts]) {
+    const sign = d.side === 'right' ? 1 : -1;
+    const h = d.highlight;
+    const accentColor =
+      h.type === 'fire'
+        ? '#b8441e'
+        : h.type === 'volcanic'
+        ? '#2f5d7c'
+        : palette.annotationColor;
+
+    // Sample bark silhouette at height d.ly so the shelf starts cleanly past bark
+    const thetaAtY = Math.atan2(d.ly, sign * Math.max(15, d.maxSideR * 0.88));
+    const rAtY = samplePolarRadiusAt(visibleOuterRadii, thetaAtY);
+    const barkXAtY =
+      Math.abs(d.ly) < rAtY
+        ? Math.sqrt(Math.max(0, rAtY * rAtY - d.ly * d.ly))
+        : Math.max(Math.abs(d.ax), d.maxSideR * 0.62);
+
+    const shelfLen = maxSpan * 0.026;
+    const rawEx = sign * (barkXAtY + maxSpan * 0.036);
+    const ex =
+      sign > 0
+        ? Math.min(Math.max(rawEx, d.ax + maxSpan * 0.028), xBoundRight - labelAllowance - shelfLen)
+        : Math.max(Math.min(rawEx, d.ax - maxSpan * 0.028), xBoundLeft + labelAllowance + shelfLen);
+    const sx =
+      sign > 0
+        ? Math.min(ex + shelfLen, xBoundRight - labelAllowance)
+        : Math.max(ex - shelfLen, xBoundLeft + labelAllowance);
+    const tx = sx + sign * (maxSpan * 0.008);
+    const anchor = sign > 0 ? 'start' : 'end';
+
+    lines.push(
+      `<polyline points="${d.ax.toFixed(2)},${d.ay.toFixed(2)} ${ex.toFixed(2)},${d.ly.toFixed(2)} ${sx.toFixed(2)},${d.ly.toFixed(2)}" fill="none" stroke="${accentColor}" stroke-width="${leaderW.toFixed(2)}" stroke-opacity="0.72" stroke-linejoin="round"/>` +
+        `<circle cx="${d.ax.toFixed(2)}" cy="${d.ay.toFixed(2)}" r="${dotR.toFixed(2)}" fill="${accentColor}" stroke="${palette.background}" stroke-width="${(dotR * 0.55).toFixed(2)}"/>` +
+        `<text x="${tx.toFixed(2)}" y="${(d.ly - subFont * 0.14).toFixed(2)}" text-anchor="${anchor}" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="${yearFont.toFixed(2)}" font-weight="700" fill="${accentColor}"${haloAttr}>${escapeXmlText(h.yearLabel)}</text>` +
+        `<text x="${tx.toFixed(2)}" y="${(d.ly + subFont * 1.05).toFixed(2)}" text-anchor="${anchor}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="${subFont.toFixed(2)}" font-weight="500" fill="${palette.annotationColor}" fill-opacity="0.86"${haloAttr}>${escapeXmlText(h.eventLabel)}</text>`
+    );
+  }
+
+  lines.push(`</g>`);
+  return lines.join('\n');
+}
+
 export interface CachedRingPaths {
   ringIndex: number;
   calendarYear: number;
@@ -187,6 +448,14 @@ export interface CachedViewBoxLayout {
 }
 
 export const MAX_BUNDLE_CACHE_SIZE = 3;
+export const MAX_HISTORICAL_BARK_CACHE_SIZE = 6;
+
+export interface HistoricalBarkCacheEntry {
+  barkDefsClipPaths: string;
+  barkLayerMarkup: string;
+  outerBarkRadiusMm: number[];
+  phloemThicknessMm: number;
+}
 
 export interface PaletteMarkupCache {
   rings: CachedRingPaths[];
@@ -206,6 +475,7 @@ export interface SimSvgCache {
   barkLayerMarkup: string;
   fireScars: CachedFireScar[];
   resinPockets: CachedResinPocket[];
+  specimenHighlights: SpecimenHighlight[];
   layoutCache: Map<string, CachedViewBoxLayout>;
   bundleCache: Map<string, GeneratedSvgBundle>;
   rayPathsCache: Map<boolean, { woodRayPaths: string; phloemRayPaths: string }>;
@@ -213,6 +483,7 @@ export interface SimSvgCache {
   getLayout: (showBark: boolean, showAnnotations: boolean, showLocatorMap: boolean) => CachedViewBoxLayout;
   getRayPaths: (showBark: boolean) => { woodRayPaths: string; phloemRayPaths: string };
   getPaletteMarkup: (palette: PaletteDefinition) => PaletteMarkupCache;
+  getHistoricalBark: (ringIndex: number, palette: PaletteDefinition) => HistoricalBarkCacheEntry | null;
 }
 
 const simSvgCacheMap = new WeakMap<TreeSimulationResult, SimSvgCache>();
@@ -292,7 +563,7 @@ function computeViewBoxLayout(
     }
   }
   if (showAnnotations) {
-    const minAnnotatedWidth = maxSpan * 1.24;
+    const minAnnotatedWidth = maxSpan * 1.56;
     if (spanX + padX * 2 < minAnnotatedWidth) {
       padX = (minAnnotatedWidth - spanX) / 2;
     }
@@ -314,6 +585,83 @@ function computeViewBoxLayout(
     locY,
     locW,
     locH,
+  };
+}
+
+function buildBarkLayerBundle(
+  bark: BarkGeometry,
+  cambiumRadii: number[],
+  woodAngles: number[],
+  pal: PaletteDefinition,
+  phloemRayPaths: string
+): { barkDefsClipPaths: string; barkLayerMarkup: string } {
+  const cambiumReverseD = polarPolygonClosedPath(cambiumRadii, woodAngles, true);
+  const outerBarkD = polarPolygonClosedPath(bark.outerBarkRadiusMm, bark.barkAnglesRad, false);
+  const phloemOuterD = polarPolygonClosedPath(bark.phloemOuterRadiusMm, bark.barkAnglesRad, false);
+  const phloemReverseD = polarPolygonClosedPath(bark.phloemOuterRadiusMm, bark.barkAnglesRad, true);
+
+  const barkDefsClipPaths =
+    `<clipPath id="rhytidome-clip"><path clip-rule="evenodd" d="${outerBarkD}${phloemReverseD}"/></clipPath>` +
+    `<clipPath id="phloem-clip"><path clip-rule="evenodd" d="${phloemOuterD}${cambiumReverseD}"/></clipPath>`;
+
+  let bMinX = Infinity;
+  let bMaxX = -Infinity;
+  let bMinY = Infinity;
+  let bMaxY = -Infinity;
+  for (let i = 0; i < bark.outerBarkRadiusMm.length; i++) {
+    const r = bark.outerBarkRadiusMm[i];
+    const theta = bark.barkAnglesRad[i];
+    const x = r * Math.cos(theta);
+    const y = r * Math.sin(theta);
+    if (x < bMinX) bMinX = x;
+    if (x > bMaxX) bMaxX = x;
+    if (y < bMinY) bMinY = y;
+    if (y > bMaxY) bMaxY = y;
+  }
+  const barkMaxSpan = Math.max(bMaxX - bMinX, bMaxY - bMinY, 20);
+  const outerStrokeW = Math.min(0.85, Math.max(0.22, barkMaxSpan * 0.0014));
+  const innerPeridermW = Math.min(0.52, Math.max(0.16, bark.phloemThicknessMm * 0.18));
+
+  const barkLayerElements: string[] = [
+    `<g id="bark-layer">`,
+    `<path d="${outerBarkD}" fill="${pal.barkPlateColor}"/>`,
+    `<g id="rhytidome-anatomy" clip-path="url(#rhytidome-clip)">`,
+  ];
+  for (const cell of bark.rhytidomeCells) {
+    const cellD = polarPointsPath(cell.pointsPolar, true);
+    if (cellD) {
+      barkLayerElements.push(
+        `<path d="${cellD}" fill="${grayHex(cell.fillGray)}" stroke="${grayHex(cell.strokeGray)}" stroke-width="${cell.strokeWidthMm.toFixed(2)}" stroke-linejoin="round"/>`
+      );
+    }
+  }
+  for (const seam of bark.peridermSeams) {
+    const seamD = polarPointsPath(seam.pointsPolar, false);
+    if (seamD) {
+      barkLayerElements.push(
+        `<path d="${seamD}" fill="none" stroke="${grayHex(seam.gray)}" stroke-width="${seam.widthMm.toFixed(2)}" stroke-linecap="round"/>`
+      );
+    }
+  }
+  barkLayerElements.push(`</g>`);
+
+  barkLayerElements.push(
+    `<path d="${outerBarkD}" fill="none" stroke="${pal.barkFissureColor}" stroke-width="${outerStrokeW.toFixed(2)}" stroke-linejoin="round"/>`
+  );
+  barkLayerElements.push(
+    `<path id="inner-phloem" d="${phloemOuterD}" fill="#d0cec6" stroke="${pal.barkFissureColor}" stroke-width="${innerPeridermW.toFixed(2)}" stroke-linejoin="round"/>`
+  );
+  if (phloemRayPaths) {
+    const phloemRayW = Math.max(0.08, bark.phloemThicknessMm * 0.075);
+    barkLayerElements.push(
+      `<path id="phloem-rays" pointer-events="none" clip-path="url(#phloem-clip)" d="${phloemRayPaths}" fill="none" stroke="#4a4944" stroke-width="${phloemRayW.toFixed(2)}" stroke-opacity="0.22"/>`
+    );
+  }
+  barkLayerElements.push(`</g>`);
+
+  return {
+    barkDefsClipPaths,
+    barkLayerMarkup: barkLayerElements.join('\n'),
   };
 }
 
@@ -380,14 +728,6 @@ export function precomputeSimSvgCache(sim: TreeSimulationResult): SimSvgCache {
 
   // 3. Precompute bark contours and defs
   const cambiumBarkSmoothD = polarSmoothClosedPath(sim.bark.cambiumRadiusMm, sim.anglesRad, 1);
-  const cambiumReverseD = polarPolygonClosedPath(sim.bark.cambiumRadiusMm, sim.anglesRad, true);
-  const outerBarkD = polarPolygonClosedPath(sim.bark.outerBarkRadiusMm, sim.bark.barkAnglesRad, false);
-  const phloemOuterD = polarPolygonClosedPath(sim.bark.phloemOuterRadiusMm, sim.bark.barkAnglesRad, false);
-  const phloemReverseD = polarPolygonClosedPath(sim.bark.phloemOuterRadiusMm, sim.bark.barkAnglesRad, true);
-
-  const barkDefsClipPaths =
-    `<clipPath id="rhytidome-clip"><path clip-rule="evenodd" d="${outerBarkD}${phloemReverseD}"/></clipPath>` +
-    `<clipPath id="phloem-clip"><path clip-rule="evenodd" d="${phloemOuterD}${cambiumReverseD}"/></clipPath>`;
 
   // 4. Precompute ray generator function & cache
   const rayPathsCache = new Map<boolean, { woodRayPaths: string; phloemRayPaths: string }>();
@@ -457,27 +797,9 @@ export function precomputeSimSvgCache(sim: TreeSimulationResult): SimSvgCache {
     return cached;
   }
 
-  // Precompute bark layer elements (bark is only rendered with showBark = true)
+  // Precompute bark layer elements (bark is rendered when showBark = true)
   const defaultRaysWithBark = getRayPaths(true);
   const phloemRayPaths = defaultRaysWithBark.phloemRayPaths;
-
-  let bMinX = Infinity;
-  let bMaxX = -Infinity;
-  let bMinY = Infinity;
-  let bMaxY = -Infinity;
-  for (let i = 0; i < sim.bark.outerBarkRadiusMm.length; i++) {
-    const r = sim.bark.outerBarkRadiusMm[i];
-    const theta = sim.bark.barkAnglesRad[i];
-    const x = r * Math.cos(theta);
-    const y = r * Math.sin(theta);
-    if (x < bMinX) bMinX = x;
-    if (x > bMaxX) bMaxX = x;
-    if (y < bMinY) bMinY = y;
-    if (y > bMaxY) bMaxY = y;
-  }
-  const barkMaxSpan = Math.max(bMaxX - bMinX, bMaxY - bMinY, 20);
-  const outerStrokeW = Math.min(0.85, Math.max(0.22, barkMaxSpan * 0.0014));
-  const innerPeridermW = Math.min(0.52, Math.max(0.16, sim.bark.phloemThicknessMm * 0.18));
 
   // Palette-driven markup generator
   function buildPaletteMarkup(pal: PaletteDefinition): PaletteMarkupCache {
@@ -573,43 +895,13 @@ export function precomputeSimSvgCache(sim: TreeSimulationResult): SimSvgCache {
     const palPithMarkup = pithElements.join('\n');
 
     // Bark layer
-    const barkLayerElements: string[] = [
-      `<g id="bark-layer">`,
-      `<path d="${outerBarkD}" fill="${pal.barkPlateColor}"/>`,
-      `<g id="rhytidome-anatomy" clip-path="url(#rhytidome-clip)">`,
-    ];
-    for (const cell of sim.bark.rhytidomeCells) {
-      const cellD = polarPointsPath(cell.pointsPolar, true);
-      if (cellD) {
-        barkLayerElements.push(
-          `<path d="${cellD}" fill="${grayHex(cell.fillGray)}" stroke="${grayHex(cell.strokeGray)}" stroke-width="${cell.strokeWidthMm.toFixed(2)}" stroke-linejoin="round"/>`
-        );
-      }
-    }
-    for (const seam of sim.bark.peridermSeams) {
-      const seamD = polarPointsPath(seam.pointsPolar, false);
-      if (seamD) {
-        barkLayerElements.push(
-          `<path d="${seamD}" fill="none" stroke="${grayHex(seam.gray)}" stroke-width="${seam.widthMm.toFixed(2)}" stroke-linecap="round"/>`
-        );
-      }
-    }
-    barkLayerElements.push(`</g>`);
-
-    barkLayerElements.push(
-      `<path d="${outerBarkD}" fill="none" stroke="${pal.barkFissureColor}" stroke-width="${outerStrokeW.toFixed(2)}" stroke-linejoin="round"/>`
+    const { barkLayerMarkup: palBarkMarkup } = buildBarkLayerBundle(
+      sim.bark,
+      sim.bark.cambiumRadiusMm,
+      sim.anglesRad,
+      pal,
+      phloemRayPaths
     );
-    barkLayerElements.push(
-      `<path id="inner-phloem" d="${phloemOuterD}" fill="#d0cec6" stroke="${pal.barkFissureColor}" stroke-width="${innerPeridermW.toFixed(2)}" stroke-linejoin="round"/>`
-    );
-    if (phloemRayPaths) {
-      const phloemRayW = Math.max(0.08, sim.bark.phloemThicknessMm * 0.075);
-      barkLayerElements.push(
-        `<path id="phloem-rays" pointer-events="none" clip-path="url(#phloem-clip)" d="${phloemRayPaths}" fill="none" stroke="#4a4944" stroke-width="${phloemRayW.toFixed(2)}" stroke-opacity="0.22"/>`
-      );
-    }
-    barkLayerElements.push(`</g>`);
-    const palBarkMarkup = barkLayerElements.join('\n');
 
     // Fire scars: shallow anatomical charred cambial crust ribbons tracing exact killed ring contours
     const palFireScars: CachedFireScar[] = (sim.fireScars ?? []).map((scar) => {
@@ -697,9 +989,89 @@ export function precomputeSimSvgCache(sim: TreeSimulationResult): SimSvgCache {
     return cached;
   }
 
-  // Prewarm default aged-wood palette
+  // Prewarm default aged-wood palette & shared mature bark clip paths
   const defaultPalette = getPalette(DEFAULT_PALETTE_ID);
+  const { barkDefsClipPaths } = buildBarkLayerBundle(
+    sim.bark,
+    sim.bark.cambiumRadiusMm,
+    sim.anglesRad,
+    defaultPalette,
+    phloemRayPaths
+  );
   const defaultMarkup = getPaletteMarkup(defaultPalette);
+
+  // Lazy historical bark cache (LRU capped at MAX_HISTORICAL_BARK_CACHE_SIZE)
+  let barkEvolutionCtx: BarkEvolutionContext | null = null;
+  const historicalBarkCache = new Map<string, HistoricalBarkCacheEntry>();
+
+  function getHistoricalBark(
+    ringIndex: number,
+    palette: PaletteDefinition
+  ): HistoricalBarkCacheEntry | null {
+    if (ringIndex < 1 || ringIndex >= sim.rings.length) {
+      return null;
+    }
+    const key = `${ringIndex}:${palette.id}`;
+    const existing = historicalBarkCache.get(key);
+    if (existing) {
+      historicalBarkCache.delete(key);
+      historicalBarkCache.set(key, existing);
+      return existing;
+    }
+
+    if (!barkEvolutionCtx) {
+      barkEvolutionCtx = createBarkEvolutionContext(
+        SPECIES_PROFILES[sim.params.species],
+        sim.anglesRad,
+        sim.rings,
+        new SeededRNG(sim.seedKey).fork('bark')
+      );
+    }
+
+    const sliceRing = sim.rings[ringIndex - 1];
+    const openCatfaceArcs = sliceRing.openCatfaceArc
+      ? [sliceRing.openCatfaceArc]
+      : undefined;
+    const sliceBark = buildAnatomicalBarkAtRing(barkEvolutionCtx, ringIndex, {
+      openCatfaceArcs,
+      detail: {
+        barkSteps: 480,
+        nascentDensity: 360,
+        nascentMinSteps: 8,
+        scaleDensity: 360,
+        scaleMinSteps: 10,
+        dfLensDensity: 16,
+        dfLensMinSteps: 6,
+        seamSteps: 120,
+      },
+    });
+    const { barkDefsClipPaths: sliceDefs, barkLayerMarkup: sliceMarkup } =
+      buildBarkLayerBundle(
+        sliceBark,
+        sliceRing.outerRadiusMm,
+        sim.anglesRad,
+        palette,
+        phloemRayPaths
+      );
+
+    const entry: HistoricalBarkCacheEntry = {
+      barkDefsClipPaths: sliceDefs,
+      barkLayerMarkup: sliceMarkup,
+      outerBarkRadiusMm: sliceBark.outerBarkRadiusMm,
+      phloemThicknessMm: sliceBark.phloemThicknessMm,
+    };
+
+    while (historicalBarkCache.size >= MAX_HISTORICAL_BARK_CACHE_SIZE) {
+      const oldestKey = historicalBarkCache.keys().next().value;
+      if (oldestKey !== undefined) {
+        historicalBarkCache.delete(oldestKey);
+      } else {
+        break;
+      }
+    }
+    historicalBarkCache.set(key, entry);
+    return entry;
+  }
 
   // Layout cache
   const layoutCache = new Map<string, CachedViewBoxLayout>();
@@ -723,6 +1095,8 @@ export function precomputeSimSvgCache(sim: TreeSimulationResult): SimSvgCache {
   getLayout(false, true, true);
   getRayPaths(false);
 
+  const specimenHighlights = extractSpecimenHighlights(sim, 4);
+
   const cacheObj: SimSvgCache = {
     rings: defaultMarkup.rings,
     ringBlocks: defaultMarkup.ringBlocks,
@@ -732,6 +1106,7 @@ export function precomputeSimSvgCache(sim: TreeSimulationResult): SimSvgCache {
     barkLayerMarkup: defaultMarkup.barkLayerMarkup,
     fireScars: defaultMarkup.fireScars,
     resinPockets: defaultMarkup.resinPockets,
+    specimenHighlights,
     layoutCache,
     bundleCache: new Map<string, GeneratedSvgBundle>(),
     rayPathsCache,
@@ -739,6 +1114,7 @@ export function precomputeSimSvgCache(sim: TreeSimulationResult): SimSvgCache {
     getLayout,
     getRayPaths,
     getPaletteMarkup,
+    getHistoricalBark,
   };
 
   simSvgCacheMap.set(sim, cacheObj);
@@ -801,6 +1177,11 @@ export function generateCrossSectionSvgBundle(
     options.maxRenderedRingIndex !== undefined &&
     effectiveMaxRing < sim.rings.length;
 
+  const sliceBark =
+    options.showBark && isPeeledInterior
+      ? cache.getHistoricalBark(effectiveMaxRing, palette)
+      : null;
+
   const cambiumSmoothD =
     isPeeledInterior && effectiveMaxRing > 0 && effectiveMaxRing <= palMarkup.rings.length
       ? palMarkup.rings[effectiveMaxRing - 1].outerDStride1
@@ -819,13 +1200,17 @@ export function generateCrossSectionSvgBundle(
     `<defs>` +
       filterDefs +
       `<clipPath id="wood-clip"><path d="${cambiumSmoothD}"/></clipPath>` +
-      (options.showBark && !isPeeledInterior ? cache.barkDefsClipPaths : '') +
+      (options.showBark
+        ? sliceBark
+          ? sliceBark.barkDefsClipPaths
+          : cache.barkDefsClipPaths
+        : '') +
       `</defs>`
   );
 
   // Layer 1: Anatomical Outer Rhytidome & Living Inner Phloem
-  if (options.showBark && !isPeeledInterior) {
-    elements.push(palMarkup.barkLayerMarkup);
+  if (options.showBark) {
+    elements.push(sliceBark ? sliceBark.barkLayerMarkup : palMarkup.barkLayerMarkup);
   }
 
   // Layer 2: Smooth Cubic-Bezier Annual Growth Rings from outermost (K) inward to (1)
@@ -901,12 +1286,14 @@ export function generateCrossSectionSvgBundle(
   }
 
   // Layer 3b: Vascular Cambium Meristem Boundary (drawn above outermost latewood so stroke is unclipped)
-  const cambiumStrokeW =
-    options.showBark && !isPeeledInterior
-      ? Math.min(0.36, Math.max(0.13, sim.bark.phloemThicknessMm * 0.13))
-      : Math.max(0.3, maxSpan * 0.002);
+  const activePhloemThick = sliceBark
+    ? sliceBark.phloemThicknessMm
+    : sim.bark.phloemThicknessMm;
+  const cambiumStrokeW = options.showBark
+    ? Math.min(0.36, Math.max(0.13, activePhloemThick * 0.13))
+    : Math.max(0.3, maxSpan * 0.002);
   elements.push(
-    `<path id="vascular-cambium" pointer-events="none" d="${cambiumSmoothD}" fill="none" stroke="${options.showBark && !isPeeledInterior ? '#2d2d2b' : '#222222'}" stroke-width="${cambiumStrokeW.toFixed(2)}"/>`
+    `<path id="vascular-cambium" pointer-events="none" d="${cambiumSmoothD}" fill="none" stroke="${options.showBark ? '#2d2d2b' : '#222222'}" stroke-width="${cambiumStrokeW.toFixed(2)}"/>`
   );
 
   // Layer 4: Scientific Scale Bar, Orientation Compass, & Specimen Metadata
@@ -966,6 +1353,35 @@ export function generateCrossSectionSvgBundle(
         `<line x1="${compX.toFixed(2)}" y1="${compY.toFixed(2)}" x2="${lx.toFixed(2)}" y2="${ly.toFixed(2)}" stroke="${palette.annotationColor}" stroke-opacity="0.6" stroke-width="${(strokeW * 0.9).toFixed(2)}" stroke-dasharray="${(strokeW * 1.8).toFixed(2)} ${(strokeW * 1.2).toFixed(2)}"/>`
     );
     elements.push(`</g>`);
+
+    const calloutHighlights = (cache.specimenHighlights ?? []).filter(
+      (h) => h.ringIndex > 0 && h.ringIndex <= effectiveMaxRing
+    );
+    if (sim.visibleRingCount >= 18 && calloutHighlights.length > 0) {
+      const visibleOuterRadii = isPeeledInterior
+        ? showBark && sliceBark
+          ? sliceBark.outerBarkRadiusMm
+          : effectiveMaxRing > 0 && effectiveMaxRing <= sim.rings.length
+          ? sim.rings[effectiveMaxRing - 1].outerRadiusMm
+          : sim.bark.cambiumRadiusMm
+        : showBark
+        ? sim.bark.outerBarkRadiusMm
+        : sim.bark.cambiumRadiusMm;
+      const calloutMarkup = buildRingCalloutsMarkup({
+        sim,
+        highlights: calloutHighlights,
+        visibleOuterRadii,
+        layout,
+        palette,
+        transparentBackground: options.transparentBackground,
+        showLocator,
+        showCaption,
+        compBottomY: compY + compR,
+      });
+      if (calloutMarkup) {
+        elements.push(calloutMarkup);
+      }
+    }
   }
 
   // Layer 5: Minimalist Tuftean Top-Left Locator Map (frameless North America, native range, specimen dot)

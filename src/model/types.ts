@@ -149,6 +149,8 @@ export interface PolarRingGeometry {
   falseRingRadiusMm?: number[];
   /** Optional locally absent mask across angles (0 = dead/absent, 1 = normal) */
   locallyAbsentMask?: number[];
+  /** Optional open fire catface arc active at end of this ring's growing season */
+  openCatfaceArc?: { centerAngleRad: number; halfArcRad: number };
 }
 
 export interface BarkGeometry {

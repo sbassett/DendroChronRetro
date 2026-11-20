@@ -203,4 +203,110 @@ describe('Minimalist Full-Window Interface Contracts', () => {
     expect(bundleRegrown.innerMarkup).toContain('id="bark-layer"');
     expect(bundleRegrown.innerMarkup).toContain(`data-ring="${simRegrown250.visibleRingCount}"`);
   });
+
+  it('keeps tree age, visible ring span, and bark visibility consistent unless actively peeling', () => {
+    const env = createMinimalEnv(1620, 2026);
+    for (const totalAge of [20, 50, 250, 380]) {
+      const sim = simulateTreeCrossSection(
+        {
+          species: 'ponderosa-pine',
+          latitude: 35.2645,
+          longitude: -111.7442,
+          totalAge,
+          deathYear: 2026,
+        },
+        env
+      );
+      expect(sim.firstRingYear).toBe(sim.germinationYear + sim.yearsToStumpHeight);
+      expect(sim.visibleRingCount).toBe(totalAge - sim.yearsToStumpHeight);
+      const lastRing = sim.rings[sim.rings.length - 1];
+      expect(lastRing.record.calendarYear).toBe(
+        sim.firstRingYear + sim.visibleRingCount - 1
+      );
+      expect(lastRing.record.treeAge).toBe(totalAge);
+    }
+
+    const sim250 = simulateTreeCrossSection(
+      {
+        species: 'ponderosa-pine',
+        latitude: 35.2645,
+        longitude: -111.7442,
+        totalAge: 250,
+        deathYear: 2026,
+      },
+      env
+    );
+
+    // Inspecting/highlighting an interior ring keeps bark visible
+    const highlightedFull = generateCrossSectionSvgBundle(sim250, {
+      showBark: true,
+      showMedullaryRays: true,
+      showAnnotations: true,
+      showLocatorMap: false,
+      showCaptionText: false,
+      transparentBackground: false,
+      highlightedRingIndex: 100,
+      maxRenderedRingIndex: undefined,
+    });
+    expect(highlightedFull.innerMarkup).toContain('id="bark-layer"');
+
+    // Peeling / growing through time keeps outer bark visible and growing with each ring;
+    // only showBark: false hides bark
+    const youngSapling = generateCrossSectionSvgBundle(sim250, {
+      showBark: true,
+      showMedullaryRays: true,
+      showAnnotations: true,
+      showLocatorMap: false,
+      showCaptionText: false,
+      transparentBackground: false,
+      maxRenderedRingIndex: 1,
+    });
+    expect(youngSapling.innerMarkup).toContain('id="bark-layer"');
+
+    const peeled = generateCrossSectionSvgBundle(sim250, {
+      showBark: true,
+      showMedullaryRays: true,
+      showAnnotations: true,
+      showLocatorMap: false,
+      showCaptionText: false,
+      transparentBackground: false,
+      maxRenderedRingIndex: sim250.visibleRingCount - 10,
+    });
+    expect(peeled.innerMarkup).toContain('id="bark-layer"');
+
+    const hiddenBark = generateCrossSectionSvgBundle(sim250, {
+      showBark: false,
+      showMedullaryRays: true,
+      showAnnotations: true,
+      showLocatorMap: false,
+      showCaptionText: false,
+      transparentBackground: false,
+      maxRenderedRingIndex: sim250.visibleRingCount - 10,
+    });
+    expect(hiddenBark.innerMarkup).not.toContain('id="bark-layer"');
+
+    const restored = generateCrossSectionSvgBundle(sim250, {
+      showBark: true,
+      showMedullaryRays: true,
+      showAnnotations: true,
+      showLocatorMap: false,
+      showCaptionText: false,
+      transparentBackground: false,
+      maxRenderedRingIndex: undefined,
+    });
+    expect(restored.innerMarkup).toContain('id="bark-layer"');
+
+    // App.tsx omits year= from permalink when unpeeled and pins landmarks without peeling
+    const appTsx = fs.readFileSync(path.resolve(cwd, 'src/App.tsx'), 'utf-8');
+    expect(appTsx).toContain('activeRingIndex !== null && activeRingIndex < simulation.visibleRingCount');
+    expect(appTsx).toMatch(/handleJumpToLandmark[\s\S]*setPinnedRing\(ringIndex\)/);
+
+    // TimeNavigation computes peeled count by visible rings and labels mature full-tree state
+    const timeNavTsx = fs.readFileSync(
+      path.resolve(cwd, 'src/components/TimeNavigation.tsx'),
+      'utf-8'
+    );
+    expect(timeNavTsx).toContain('totalRings - clampedRing');
+    expect(timeNavTsx).toContain('Full Tree ·');
+  });
 });

@@ -19,7 +19,11 @@ import { TimeNavigation, TimeNavMode } from './components/TimeNavigation';
 import { TimelineDock } from './components/TimelineDock';
 import { export4kPng, exportStandaloneSvg } from './model/exportPipeline';
 import { simulateTreeCrossSection } from './model/growthEngine';
-import { generateEnvironmentalNarrative } from './model/narrative';
+import {
+  extractSpecimenHighlights,
+  generateEnvironmentalNarrative,
+  generateSpecimenLede,
+} from './model/narrative';
 import { getPalette } from './model/palettes';
 import {
   buildShareableUrl,
@@ -30,6 +34,7 @@ import {
 import {
   getPresetById,
   PresetId,
+  RETROSPECTIVE_PRESETS,
   RetrospectivePreset,
 } from './model/presets';
 import { generateCrossSectionSvgBundle, SvgRenderOptions } from './model/svgGenerator';
@@ -44,7 +49,7 @@ import {
   parseCoordinateInput,
   UnitSystem,
 } from './model/units';
-import { SPECIES_PROFILES } from './model/species';
+import { LOCATION_PRESETS, SPECIES_PROFILES } from './model/species';
 import {
   getCachedEnvironmentDataset,
   loadEnvironmentDataset,
@@ -85,11 +90,13 @@ export const App: React.FC = () => {
   } | null>(null);
   const [loadingEnv, setLoadingEnv] = useState<boolean>(true);
   const [hoveredRing, setHoveredRing] = useState<number | null>(null);
+  const [pinnedRing, setPinnedRing] = useState<number | null>(null);
   const [copiedSvg, setCopiedSvg] = useState<boolean>(false);
   const [copiedShareLink, setCopiedShareLink] = useState<boolean>(false);
   const [isColophonOpen, setIsColophonOpen] = useState<boolean>(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState<boolean>(false);
   const [activePresetId, setActivePresetId] = useState<PresetId | string | null>(null);
+  const [customPlaceLabel, setCustomPlaceLabel] = useState<string | null>(null);
 
   // Minimalist disclosure state
   const [activeEditor, setActiveEditor] = useState<ActiveEditorKey>(null);
@@ -151,6 +158,7 @@ export const App: React.FC = () => {
 
   const handleSelectPreset = useCallback((preset: RetrospectivePreset) => {
     setActivePresetId(preset.id);
+    setCustomPlaceLabel(null);
     setSpecies(preset.species);
     setLatitude(preset.latitude);
     setLongitude(preset.longitude);
@@ -170,7 +178,9 @@ export const App: React.FC = () => {
       setNavMode(preset.initialMode);
     }
     setHoveredRing(null);
+    setPinnedRing(null);
     setActiveRingIndex(null);
+    targetPermalinkYearRef.current = null;
     setIsPlaying(false);
     setActiveEditor(null);
   }, []);
@@ -253,7 +263,9 @@ export const App: React.FC = () => {
     setLatInput(lat.toFixed(5));
     setLonInput(lon.toFixed(5));
     setHoveredRing(null);
+    setPinnedRing(null);
     setActiveRingIndex(null);
+    targetPermalinkYearRef.current = null;
     setIsPlaying(false);
   }, []);
 
@@ -278,8 +290,11 @@ export const App: React.FC = () => {
       setLonInput(longitude.toFixed(5));
     }
     if (changed) {
+      setCustomPlaceLabel(null);
       setHoveredRing(null);
+      setPinnedRing(null);
       setActiveRingIndex(null);
+      targetPermalinkYearRef.current = null;
       setIsPlaying(false);
     }
   }, [latInput, lonInput, latitude, longitude]);
@@ -363,9 +378,9 @@ export const App: React.FC = () => {
       );
       if (target) {
         setActiveRingIndex(
-          target.record.ringIndex >= simulation.visibleRingCount
-            ? null
-            : target.record.ringIndex
+          target.record.ringIndex < simulation.visibleRingCount
+            ? target.record.ringIndex
+            : null
         );
       }
       targetPermalinkYearRef.current = null;
@@ -374,12 +389,18 @@ export const App: React.FC = () => {
       }
     }
     if (
+      pinnedRing !== null &&
+      pinnedRing > simulation.visibleRingCount
+    ) {
+      setPinnedRing(null);
+    }
+    if (
       activeRingIndex !== null &&
       activeRingIndex >= simulation.visibleRingCount
     ) {
       setActiveRingIndex(null);
     }
-  }, [simulation, activeRingIndex]);
+  }, [simulation, activeRingIndex, pinnedRing]);
 
   const effectiveMaxRenderedRing =
     activeRingIndex !== null
@@ -388,6 +409,8 @@ export const App: React.FC = () => {
           Math.min(simulation?.visibleRingCount ?? 1, activeRingIndex)
         )
       : simulation?.visibleRingCount;
+
+  const inspectedRing = hoveredRing ?? pinnedRing;
 
   // Live viewport SVG omits duplicate embedded locator map & text caption so the cross section centers cleanly
   const svgBundle = useMemo(() => {
@@ -399,7 +422,7 @@ export const App: React.FC = () => {
       showCaptionText: false,
       unitSystem,
       highlightedRingIndex:
-        hoveredRing ?? (!isPlaying && isPeeled ? effectiveMaxRenderedRing : null),
+        inspectedRing ?? (!isPlaying && isPeeled ? effectiveMaxRenderedRing : null),
       maxRenderedRingIndex: isPeeled ? effectiveMaxRenderedRing : undefined,
       paletteId: selectedPalette,
       enableWoodGrain: enableWoodGrain,
@@ -408,7 +431,7 @@ export const App: React.FC = () => {
     simulation,
     renderOptions,
     unitSystem,
-    hoveredRing,
+    inspectedRing,
     isPlaying,
     activeRingIndex,
     effectiveMaxRenderedRing,
@@ -461,7 +484,7 @@ export const App: React.FC = () => {
             return current + 1;
           }
           if (current <= 1) {
-            return simulation.visibleRingCount;
+            return null;
           }
           return current - 1;
         });
@@ -478,10 +501,11 @@ export const App: React.FC = () => {
     if (!simulation || typeof window === 'undefined') return;
 
     const timeout = setTimeout(() => {
-      const activeRec =
-        effectiveMaxRenderedRing !== undefined
-          ? ringsByIndex.get(effectiveMaxRenderedRing)
-          : undefined;
+      const isPeeledUrl =
+        activeRingIndex !== null && activeRingIndex < simulation.visibleRingCount;
+      const activeRec = isPeeledUrl
+        ? ringsByIndex.get(activeRingIndex)
+        : undefined;
 
       const permalinkQuery = serializePermalink({
         sp: species,
@@ -509,7 +533,7 @@ export const App: React.FC = () => {
     totalAge,
     effectiveDeathYear,
     navMode,
-    effectiveMaxRenderedRing,
+    activeRingIndex,
     activePresetId,
     ringsByIndex,
     simulation,
@@ -519,10 +543,13 @@ export const App: React.FC = () => {
   // Copy share link with clipboard visual confirmation
   const handleCopyShareLink = useCallback(async () => {
     try {
-      const activeRec =
-        effectiveMaxRenderedRing !== undefined
-          ? ringsByIndex.get(effectiveMaxRenderedRing)
-          : undefined;
+      const isPeeledUrl =
+        simulation !== null &&
+        activeRingIndex !== null &&
+        activeRingIndex < simulation.visibleRingCount;
+      const activeRec = isPeeledUrl
+        ? ringsByIndex.get(activeRingIndex)
+        : undefined;
 
       const fullUrl = buildShareableUrl({
         sp: species,
@@ -543,13 +570,14 @@ export const App: React.FC = () => {
       // Ignore clipboard restrictions
     }
   }, [
+    simulation,
     species,
     latitude,
     longitude,
     totalAge,
     effectiveDeathYear,
     navMode,
-    effectiveMaxRenderedRing,
+    activeRingIndex,
     activePresetId,
     ringsByIndex,
     selectedPalette,
@@ -672,6 +700,36 @@ export const App: React.FC = () => {
     [simulation, unitSystem]
   );
 
+  const activeSiteDisplayName = useMemo(() => {
+    if (activePresetId) {
+      const pm = RETROSPECTIVE_PRESETS.find((p) => p.id === activePresetId);
+      if (pm) return pm.coordinates.siteName;
+    }
+    const locMatch = LOCATION_PRESETS.find(
+      (p) =>
+        Math.abs(p.latitude - latitude) < 0.003 &&
+        Math.abs(p.longitude - longitude) < 0.003
+    );
+    if (locMatch) return locMatch.name;
+    const retroMatch = RETROSPECTIVE_PRESETS.find(
+      (p) =>
+        Math.abs(p.latitude - latitude) < 0.003 &&
+        Math.abs(p.longitude - longitude) < 0.003
+    );
+    if (retroMatch) return retroMatch.coordinates.siteName;
+    return customPlaceLabel ?? undefined;
+  }, [activePresetId, latitude, longitude, customPlaceLabel]);
+
+  const specimenHighlights = useMemo(
+    () => (simulation ? extractSpecimenHighlights(simulation, 5) : []),
+    [simulation]
+  );
+
+  const specimenLede = useMemo(
+    () => (simulation ? generateSpecimenLede(simulation, activeSiteDisplayName) : null),
+    [simulation, activeSiteDisplayName]
+  );
+
   const handleCopySvg = useCallback(async () => {
     const exportBundle = buildExportSvgBundle();
     if (!exportBundle?.svgMarkup) return;
@@ -695,6 +753,8 @@ export const App: React.FC = () => {
 
   const buildPermalinkUrl = useCallback(() => {
     if (!simulation) return '';
+    const isPeeledUrl =
+      activeRingIndex !== null && activeRingIndex < simulation.visibleRingCount;
     return buildShareableUrl({
       sp: species,
       lat: latitude,
@@ -702,8 +762,7 @@ export const App: React.FC = () => {
       age: totalAge,
       death: effectiveDeathYear,
       mode: navMode,
-      year: ringsByIndex.get(effectiveMaxRenderedRing ?? simulation.visibleRingCount)
-        ?.calendarYear,
+      year: isPeeledUrl ? ringsByIndex.get(activeRingIndex)?.calendarYear : undefined,
       preset: activePresetId ?? undefined,
       pal: selectedPalette,
     });
@@ -716,7 +775,7 @@ export const App: React.FC = () => {
     effectiveDeathYear,
     navMode,
     ringsByIndex,
-    effectiveMaxRenderedRing,
+    activeRingIndex,
     activePresetId,
     selectedPalette,
   ]);
@@ -789,6 +848,7 @@ export const App: React.FC = () => {
   const handleTimelineRingChange = useCallback(
     (idx: number) => {
       setIsPlaying(false);
+      setPinnedRing(null);
       if (simulation && idx >= simulation.visibleRingCount) {
         setActiveRingIndex(null);
       } else {
@@ -797,6 +857,17 @@ export const App: React.FC = () => {
     },
     [simulation]
   );
+
+  const handleTogglePlay = useCallback(() => {
+    setIsPlaying((prev) => {
+      const next = !prev;
+      if (next) {
+        setPinnedRing(null);
+        setHoveredRing(null);
+      }
+      return next;
+    });
+  }, []);
 
   const handleToggleEditor = useCallback(
     (editor: Exclude<ActiveEditorKey, null>) => {
@@ -809,7 +880,9 @@ export const App: React.FC = () => {
     setSpecies(sp);
     setActivePresetId(null);
     setHoveredRing(null);
+    setPinnedRing(null);
     setActiveRingIndex(null);
+    targetPermalinkYearRef.current = null;
     setIsPlaying(false);
   }, []);
 
@@ -827,6 +900,7 @@ export const App: React.FC = () => {
     (lat: number, lon: number) => {
       handleSelectLocation(lat, lon);
       setActivePresetId(null);
+      setCustomPlaceLabel(null);
     },
     [handleSelectLocation]
   );
@@ -836,15 +910,60 @@ export const App: React.FC = () => {
       handleSelectLocation(lat, lon);
       setSpecies(recommendedSpecies);
       setActivePresetId(null);
+      setCustomPlaceLabel(null);
     },
     [handleSelectLocation]
+  );
+
+  const handleSelectPlace = useCallback(
+    (
+      lat: number,
+      lon: number,
+      displayLabel: string,
+      recommendedSpecies?: SpeciesId
+    ) => {
+      handleSelectLocation(lat, lon);
+      if (recommendedSpecies) {
+        setSpecies(recommendedSpecies);
+      }
+      setActivePresetId(null);
+      setCustomPlaceLabel(displayLabel);
+      setActiveEditor(null);
+    },
+    [handleSelectLocation]
+  );
+
+  const handleJumpToLandmark = useCallback(
+    (ringIndex: number | null) => {
+      setIsPlaying(false);
+      if (ringIndex === null) {
+        setActiveRingIndex(null);
+        setPinnedRing(null);
+        setHoveredRing(null);
+        return;
+      }
+      if (ringIndex === pinnedRing) {
+        setPinnedRing(null);
+        setHoveredRing(null);
+        return;
+      }
+      // If currently peeled past the target ring, restore full tree + bark so the ring is visible
+      if (activeRingIndex !== null && ringIndex > activeRingIndex) {
+        setActiveRingIndex(null);
+      }
+      setPinnedRing(ringIndex);
+      setHoveredRing(null);
+    },
+    [pinnedRing, activeRingIndex]
   );
 
   const handleAgeChange = useCallback((age: number) => {
     setTotalAge(age);
     setActivePresetId(null);
     setHoveredRing(null);
+    setPinnedRing(null);
     setActiveRingIndex(null);
+    targetPermalinkYearRef.current = null;
     setIsPlaying(false);
   }, []);
 
@@ -852,7 +971,9 @@ export const App: React.FC = () => {
     setOverrideDeathYear(checked);
     setActivePresetId(null);
     setHoveredRing(null);
+    setPinnedRing(null);
     setActiveRingIndex(null);
+    targetPermalinkYearRef.current = null;
     setIsPlaying(false);
   }, []);
 
@@ -860,7 +981,9 @@ export const App: React.FC = () => {
     setCustomDeathYear(year);
     setActivePresetId(null);
     setHoveredRing(null);
+    setPinnedRing(null);
     setActiveRingIndex(null);
+    targetPermalinkYearRef.current = null;
     setIsPlaying(false);
   }, []);
 
@@ -890,9 +1013,9 @@ export const App: React.FC = () => {
       className={`app-shell ${isExhibitionMode ? 'exhibition-mode' : ''}`}
       style={{ '--canvas-bg': activePalette.background } as React.CSSProperties}
     >
-      {hoveredRing !== null && (
+      {inspectedRing !== null && (
         <style>{`
-          .svg-viewport svg path[data-ring="${hoveredRing}"][data-year] {
+          .svg-viewport svg path[data-ring="${inspectedRing}"][data-year] {
             stroke: #000000;
             stroke-width: 1.6px;
             vector-effect: non-scaling-stroke;
@@ -914,7 +1037,7 @@ export const App: React.FC = () => {
               baseViewBox={svgBundle.viewBox}
               specimenResetKey={`${simulation.seedKey}:${totalAge}:${effectiveDeathYear}`}
               ringsByIndex={ringsByIndex}
-              hoveredRing={hoveredRing}
+              hoveredRing={inspectedRing}
               unitSystem={unitSystem}
               onHoverRing={setHoveredRing}
               isExhibitionMode={isExhibitionMode}
@@ -944,6 +1067,12 @@ export const App: React.FC = () => {
               simulation={simulation}
               viabilityDetail={viabilityDetail}
               activePresetId={activePresetId}
+              customPlaceLabel={customPlaceLabel}
+              specimenLede={specimenLede}
+              highlights={specimenHighlights}
+              activeRingIndex={activeRingIndex}
+              pinnedRing={pinnedRing}
+              onJumpToLandmark={handleJumpToLandmark}
               activePalette={activePalette}
               showLocatorMap={renderOptions.showLocatorMap ?? true}
               transparentBackground={renderOptions.transparentBackground}
@@ -956,6 +1085,7 @@ export const App: React.FC = () => {
               onCommitCoords={commitCoordInputs}
               onSelectMapLocation={handleMapSelect}
               onSelectReferenceSite={handleReferenceSiteSelect}
+              onSelectPlace={handleSelectPlace}
               onAgeChange={handleAgeChange}
               onToggleOverrideDeathYear={handleToggleOverrideDeath}
               onCustomDeathYearChange={handleCustomDeathYearChange}
@@ -1056,14 +1186,14 @@ export const App: React.FC = () => {
                 firstYear={simulation.firstRingYear}
                 deathYear={effectiveDeathYear}
                 isPlaying={isPlaying}
-                onTogglePlay={() => setIsPlaying((p) => !p)}
+                onTogglePlay={handleTogglePlay}
                 playbackSpeed={playbackSpeed}
                 onSpeedChange={setPlaybackSpeed}
                 activeRecord={ringsByIndex.get(
                   effectiveMaxRenderedRing ?? simulation.visibleRingCount
                 )}
                 records={ringRecords}
-                hoveredRing={hoveredRing}
+                hoveredRing={inspectedRing}
                 unitSystem={unitSystem}
                 latitude={latitude}
                 longitude={longitude}
@@ -1116,6 +1246,37 @@ export const App: React.FC = () => {
               </div>
             </header>
 
+            {!isMobileSheetOpen && specimenHighlights.length > 0 && (
+              <div
+                className="mobile-landmark-strip"
+                role="group"
+                aria-label="Tap to inspect key specimen rings"
+              >
+                {specimenHighlights.slice(0, 5).map((h) => {
+                  const isActive = pinnedRing === h.ringIndex;
+                  return (
+                    <button
+                      key={h.id}
+                      type="button"
+                      className={`landmark-jump-chip type-${h.type} ${isActive ? 'active' : ''}`}
+                      onClick={() => handleJumpToLandmark(h.ringIndex)}
+                    >
+                      {h.chipLabel}
+                    </button>
+                  );
+                })}
+                {(activeRingIndex !== null || pinnedRing !== null) && (
+                  <button
+                    type="button"
+                    className="landmark-jump-chip reset"
+                    onClick={() => handleJumpToLandmark(null)}
+                  >
+                    {activeRingIndex !== null ? 'Full Tree' : 'Clear'}
+                  </button>
+                )}
+              </div>
+            )}
+
             <MobileSheet
               isOpen={isMobileSheetOpen}
               activeTab={mobileSheetTab}
@@ -1133,6 +1294,7 @@ export const App: React.FC = () => {
               onCommitCoords={commitCoordInputs}
               onSelectMapLocation={handleMapSelect}
               onSelectReferenceSite={handleReferenceSiteSelect}
+              onSelectPlace={handleSelectPlace}
               totalAge={totalAge}
               overrideDeathYear={overrideDeathYear}
               customDeathYear={customDeathYear}
@@ -1143,6 +1305,11 @@ export const App: React.FC = () => {
               onCustomDeathYearChange={handleCustomDeathYearChange}
               activePresetId={activePresetId}
               onSelectPreset={handleSelectPreset}
+              specimenLede={specimenLede}
+              highlights={specimenHighlights}
+              peeledRingIndex={activeRingIndex}
+              pinnedRing={pinnedRing}
+              onJumpToLandmark={handleJumpToLandmark}
               simulation={simulation}
               story={envNarrative?.story ?? null}
               viabilityDetail={viabilityDetail}
@@ -1162,12 +1329,12 @@ export const App: React.FC = () => {
               }
               onRingChange={handleTimelineRingChange}
               isPlaying={isPlaying}
-              onTogglePlay={() => setIsPlaying((p) => !p)}
+              onTogglePlay={handleTogglePlay}
               playbackSpeed={playbackSpeed}
               onSpeedChange={setPlaybackSpeed}
               ringRecords={ringRecords}
               ringsByIndex={ringsByIndex}
-              hoveredRing={hoveredRing}
+              hoveredRing={inspectedRing}
               onHoverRing={setHoveredRing}
               includeColophonBorder={includeColophonBorder}
               onToggleColophonBorder={setIncludeColophonBorder}
@@ -1201,7 +1368,7 @@ export const App: React.FC = () => {
               firstYear={simulation.firstRingYear}
               deathYear={effectiveDeathYear}
               isPlaying={isPlaying}
-              onTogglePlay={() => setIsPlaying((p) => !p)}
+              onTogglePlay={handleTogglePlay}
               playbackSpeed={playbackSpeed}
               onSpeedChange={setPlaybackSpeed}
               activeRecord={ringsByIndex.get(

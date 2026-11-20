@@ -66,6 +66,10 @@ export const LedgerTelemetryPanel: React.FC<LedgerTelemetryPanelProps> = ({
             <span className="story-coords">{coordDisplay}</span>
           </div>
           <p className="story-prose">{story}</p>
+          <p className="ledger-provenance-callout">
+            Real climate &amp; terrain (1200–2026); tree geometry and fire years are
+            biophysically simulated, not cored from a physical stump.
+          </p>
         </section>
       )}
 

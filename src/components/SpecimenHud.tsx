@@ -1,10 +1,12 @@
-import React, { useEffect, useMemo, useRef } from 'react';
-import { AlertTriangle, MapPin, Pencil, X } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, MapPin, Pencil, Search, X } from 'lucide-react';
+import { SpecimenHighlight } from '../model/narrative';
 import { PaletteDefinition } from '../model/palettes';
 import { RETROSPECTIVE_PRESETS } from '../model/presets';
 import { LOCATION_PRESETS, SPECIES_PROFILES } from '../model/species';
 import { SpeciesId, TreeSimulationResult } from '../model/types';
-import { formatStumpHeightShort, UnitSystem } from '../model/units';
+import { formatElevation, formatStumpHeightShort, UnitSystem } from '../model/units';
+import { PlaceSearchResult, searchPlaces } from '../services/geocodingApi';
 import { LocatorMapWidget } from './LocatorMapWidget';
 import { MonochromeMapPicker } from './MonochromeMapPicker';
 
@@ -58,6 +60,12 @@ export interface LocationPickerPanelProps {
   onCommitCoords: () => void;
   onSelectMapLocation: (lat: number, lon: number) => void;
   onSelectReferenceSite: (lat: number, lon: number, recommendedSpecies: SpeciesId) => void;
+  onSelectPlace?: (
+    lat: number,
+    lon: number,
+    displayLabel: string,
+    recommendedSpecies?: SpeciesId
+  ) => void;
 }
 
 export const LocationPickerPanel: React.FC<LocationPickerPanelProps> = ({
@@ -72,9 +80,142 @@ export const LocationPickerPanel: React.FC<LocationPickerPanelProps> = ({
   onCommitCoords,
   onSelectMapLocation,
   onSelectReferenceSite,
+  onSelectPlace,
 }) => {
+  const [placeQuery, setPlaceQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<PlaceSearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [hasSearchedEmpty, setHasSearchedEmpty] = useState(false);
+
+  useEffect(() => {
+    const trimmed = placeQuery.trim();
+    if (trimmed.length < 2) {
+      setSearchResults([]);
+      setIsSearching(false);
+      setHasSearchedEmpty(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setIsSearching(true);
+    setHasSearchedEmpty(false);
+
+    const timer = window.setTimeout(() => {
+      searchPlaces(trimmed, controller.signal)
+        .then((results) => {
+          if (controller.signal.aborted) return;
+          setSearchResults(results);
+          setHasSearchedEmpty(results.length === 0);
+          setIsSearching(false);
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) {
+            setSearchResults([]);
+            setIsSearching(false);
+          }
+        });
+    }, 260);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [placeQuery]);
+
+  const handleChooseResult = (res: PlaceSearchResult) => {
+    if (onSelectPlace) {
+      onSelectPlace(res.latitude, res.longitude, res.displayLabel, res.recommendedSpecies);
+    } else if (res.recommendedSpecies) {
+      onSelectReferenceSite(res.latitude, res.longitude, res.recommendedSpecies);
+    } else {
+      onSelectMapLocation(res.latitude, res.longitude);
+    }
+    setPlaceQuery('');
+    setSearchResults([]);
+    setHasSearchedEmpty(false);
+  };
+
+  const handleSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (searchResults.length > 0) {
+      handleChooseResult(searchResults[0]);
+      return;
+    }
+    const trimmed = placeQuery.trim();
+    if (trimmed.length < 2) return;
+    setIsSearching(true);
+    const immediate = await searchPlaces(trimmed);
+    setIsSearching(false);
+    if (immediate.length > 0) {
+      handleChooseResult(immediate[0]);
+    } else {
+      setSearchResults([]);
+      setHasSearchedEmpty(true);
+    }
+  };
+
   return (
     <div className="editor-panel-body">
+      <div className="place-search-wrap">
+        <div className="place-search-input-row">
+          <Search size={13} className="place-search-icon" aria-hidden="true" />
+          <input
+            id="place-search-input"
+            type="text"
+            className="place-search-input"
+            placeholder="Search town, peak, or forest (e.g. Bend, OR)..."
+            aria-label="Search place name"
+            value={placeQuery}
+            onChange={(e) => setPlaceQuery(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
+          />
+          {placeQuery && (
+            <button
+              type="button"
+              className="place-search-clear-btn"
+              aria-label="Clear place search"
+              onClick={() => {
+                setPlaceQuery('');
+                setSearchResults([]);
+                setHasSearchedEmpty(false);
+              }}
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+
+        {(isSearching || searchResults.length > 0 || hasSearchedEmpty) && (
+          <div className="place-search-dropdown" role="listbox" aria-label="Matching places">
+            {isSearching && searchResults.length === 0 && (
+              <div className="place-search-status">Searching places…</div>
+            )}
+            {searchResults.map((res) => (
+              <button
+                key={res.id}
+                type="button"
+                role="option"
+                aria-selected={false}
+                className="place-search-item"
+                onClick={() => handleChooseResult(res)}
+              >
+                <span className="place-search-name">{res.name}</span>
+                <span className="place-search-meta">
+                  {res.subtitle}
+                  {res.elevationM !== undefined && ` · ${formatElevation(res.elevationM, unitSystem)}`}
+                </span>
+              </button>
+            ))}
+            {!isSearching && hasSearchedEmpty && (
+              <div className="place-search-status">
+                No matching places found — click the map or enter coordinates.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       <MonochromeMapPicker
         latitude={latitude}
         longitude={longitude}
@@ -166,6 +307,25 @@ export const ChronologyEditorPanel: React.FC<ChronologyEditorPanelProps> = ({
   onToggleOverrideDeathYear,
   onCustomDeathYearChange,
 }) => {
+  const [ageDraft, setAgeDraft] = useState<string>(String(totalAge));
+
+  useEffect(() => {
+    setAgeDraft(String(totalAge));
+  }, [totalAge]);
+
+  const commitAgeDraft = () => {
+    const parsed = parseInt(ageDraft, 10);
+    if (Number.isNaN(parsed)) {
+      setAgeDraft(String(totalAge));
+      return;
+    }
+    const clamped = Math.max(5, Math.min(400, parsed));
+    setAgeDraft(String(clamped));
+    if (clamped !== totalAge) {
+      onAgeChange(clamped);
+    }
+  };
+
   return (
     <div className="editor-panel-body age-section">
       <div className="section-label-row">
@@ -174,13 +334,25 @@ export const ChronologyEditorPanel: React.FC<ChronologyEditorPanelProps> = ({
         </label>
         <div className="age-number-wrap">
           <input
+            id="age-number-input"
             type="number"
             min={5}
             max={400}
-            value={totalAge}
-            onChange={(e) =>
-              onAgeChange(Math.max(5, Math.min(400, Number(e.target.value) || 5)))
-            }
+            value={ageDraft}
+            onChange={(e) => {
+              const raw = e.target.value;
+              setAgeDraft(raw);
+              const parsed = parseInt(raw, 10);
+              if (!Number.isNaN(parsed) && parsed >= 5 && parsed <= 400) {
+                onAgeChange(parsed);
+              }
+            }}
+            onBlur={commitAgeDraft}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                commitAgeDraft();
+              }
+            }}
           />
           <span>yrs</span>
         </div>
@@ -191,17 +363,18 @@ export const ChronologyEditorPanel: React.FC<ChronologyEditorPanelProps> = ({
         className="mono-slider"
         type="range"
         min={5}
-        max={350}
-        value={Math.min(350, totalAge)}
+        max={400}
+        value={Math.max(5, Math.min(400, totalAge))}
         onChange={(e) => onAgeChange(Number(e.target.value))}
       />
 
       {simulation && (
         <div className="age-narrative-subtext">
-          Germinated {simulation.germinationYear} • First ring at{' '}
-          {formatStumpHeightShort(simulation.stumpHeightM, unitSystem)} sampling plane:{' '}
-          {simulation.firstRingYear} ({simulation.visibleRingCount} visible rings) • Outer cambium:{' '}
-          {effectiveDeathYear}
+          Germinated {simulation.germinationYear} •{' '}
+          {formatStumpHeightShort(simulation.stumpHeightM, unitSystem)} stump plane:{' '}
+          {simulation.firstRingYear}–
+          {simulation.rings[simulation.rings.length - 1]?.record.calendarYear ?? effectiveDeathYear} ({simulation.visibleRingCount} visible rings, +
+          {simulation.yearsToStumpHeight} seedling yrs)
         </div>
       )}
 
@@ -259,6 +432,12 @@ export interface SpecimenHudProps {
   simulation: TreeSimulationResult | null;
   viabilityDetail: string | null;
   activePresetId: string | null;
+  customPlaceLabel?: string | null;
+  specimenLede?: string | null;
+  highlights?: SpecimenHighlight[];
+  activeRingIndex?: number | null;
+  pinnedRing?: number | null;
+  onJumpToLandmark?: (ringIndex: number | null) => void;
   activePalette: PaletteDefinition;
   showLocatorMap: boolean;
   transparentBackground: boolean;
@@ -271,6 +450,12 @@ export interface SpecimenHudProps {
   onCommitCoords: () => void;
   onSelectMapLocation: (lat: number, lon: number) => void;
   onSelectReferenceSite: (lat: number, lon: number, recommendedSpecies: SpeciesId) => void;
+  onSelectPlace?: (
+    lat: number,
+    lon: number,
+    displayLabel: string,
+    recommendedSpecies?: SpeciesId
+  ) => void;
   onAgeChange: (age: number) => void;
   onToggleOverrideDeathYear: (checked: boolean) => void;
   onCustomDeathYearChange: (year: number) => void;
@@ -292,6 +477,12 @@ export const SpecimenHud: React.FC<SpecimenHudProps> = ({
   simulation,
   viabilityDetail,
   activePresetId,
+  customPlaceLabel,
+  specimenLede,
+  highlights,
+  activeRingIndex,
+  pinnedRing,
+  onJumpToLandmark,
   activePalette,
   showLocatorMap,
   transparentBackground,
@@ -304,6 +495,7 @@ export const SpecimenHud: React.FC<SpecimenHudProps> = ({
   onCommitCoords,
   onSelectMapLocation,
   onSelectReferenceSite,
+  onSelectPlace,
   onAgeChange,
   onToggleOverrideDeathYear,
   onCustomDeathYearChange,
@@ -345,8 +537,9 @@ export const SpecimenHud: React.FC<SpecimenHudProps> = ({
         Math.abs(p.longitude - longitude) < 0.003
     );
     if (retroMatch) return retroMatch.coordinates.siteName;
+    if (customPlaceLabel) return customPlaceLabel;
     return 'Field Coordinates';
-  }, [activePresetId, latitude, longitude]);
+  }, [activePresetId, latitude, longitude, customPlaceLabel]);
 
   const firstYearDisplay =
     simulation?.firstRingYear ?? effectiveDeathYear - Math.max(4, totalAge) + 1;
@@ -439,6 +632,60 @@ export const SpecimenHud: React.FC<SpecimenHudProps> = ({
           </button>
         </div>
 
+        {specimenLede && (
+          <div className="hud-specimen-summary">
+            <p className="hud-specimen-lede">{specimenLede}</p>
+            {highlights && highlights.length > 0 && onJumpToLandmark && (
+              <div
+                className="hud-landmark-chips"
+                role="group"
+                aria-label="Inspect milestone rings"
+              >
+                {highlights.slice(0, 4).map((h) => {
+                  const isActive = pinnedRing === h.ringIndex;
+                  return (
+                    <button
+                      key={h.id}
+                      type="button"
+                      className={`landmark-jump-chip type-${h.type} ${isActive ? 'active' : ''}`}
+                      title={`${h.description} Click to highlight ${h.year} CE on cross-section.`}
+                      aria-pressed={isActive}
+                      onClick={() => onJumpToLandmark(h.ringIndex)}
+                    >
+                      {h.chipLabel}
+                    </button>
+                  );
+                })}
+                {activeRingIndex !== null && activeRingIndex !== undefined ? (
+                  <button
+                    type="button"
+                    className="landmark-jump-chip reset"
+                    title="Return to full cross-section with outer bark"
+                    onClick={() => onJumpToLandmark(null)}
+                  >
+                    Full Tree
+                  </button>
+                ) : (
+                  pinnedRing !== null &&
+                  pinnedRing !== undefined && (
+                    <button
+                      type="button"
+                      className="landmark-jump-chip reset"
+                      title="Clear highlighted ring focus"
+                      onClick={() => onJumpToLandmark(null)}
+                    >
+                      Clear
+                    </button>
+                  )
+                )}
+              </div>
+            )}
+            <p className="hud-provenance-note">
+              Real 1200–2026 climate &amp; terrain; tree &amp; fire years are simulated.
+            </p>
+          </div>
+        )}
+
         {isStressed && simulation && (
           <div
             className={`hud-viability-pill ${simulation.viability.stressLevel}`}
@@ -497,6 +744,7 @@ export const SpecimenHud: React.FC<SpecimenHudProps> = ({
                 onCommitCoords={onCommitCoords}
                 onSelectMapLocation={onSelectMapLocation}
                 onSelectReferenceSite={onSelectReferenceSite}
+                onSelectPlace={onSelectPlace}
               />
             )}
 

@@ -113,11 +113,10 @@ export const ColophonModal: React.FC<ColophonModalProps> = ({ isOpen, onClose })
                   <strong>Temperature Forcing (T₁ … T₄)</strong>
                 </div>
                 <p>
-                  Cambial cell division (xylogenesis) is activated when daily temperatures exceed species-specific
-                  cardinal thresholds (T₁ ≈ 3.2°C). Peak cell division occurs within the optimal
-                  thermal window (16.5°C – 25.5°C). Extreme summer thermal stress
-                  (T &gt; 35.5°C) induces stomatal closure, suppressing carbon assimilation and halting
-                  radial expansion.
+                  Cambial cell division (xylogenesis) activates when temperatures exceed species-specific
+                  cardinal thresholds (e.g., T₁ ≈ 2.0°C in subalpine Bristlecone Pine up to 4.2°C in
+                  Ponderosa Pine). Peak division occurs within each species’ optimal thermal window, while
+                  extreme summer heat (T &gt; T₄) triggers stomatal closure and halts radial expansion.
                 </p>
               </div>
 
@@ -166,11 +165,11 @@ export const ColophonModal: React.FC<ColophonModalProps> = ({ isOpen, onClose })
                   <strong>Disturbance Forensics: Wildfire Scars &amp; Resin Pockets</strong>
                 </div>
                 <p>
-                  Wildfires generate intense thermal necrosis on uphill/leeward bark faces, creating an open triangular
-                  catface of exposed dead xylem. In subsequent post-fire seasons, adjacent living cambial margins roll
-                  inward as protective woundwood calluses, curling gradually over decades to re-envelope the charred void.
-                  Concomitantly, traumatic resin canals form lenticular fluid pockets walled off in secondary xylem to seal
-                  pathogen breaches.
+                  Low-to-moderate-severity surface fires generate localized thermal necrosis on uphill or
+                  downwind faces without killing mature trees, creating a charred cambial scar (catface).
+                  While unhealed, resinous woundwood margins remain highly susceptible to recorder-tree
+                  re-scarring in subsequent fire years until curving calluses gradually bridge the gap.
+                  Traumatic resin canals wall off adjacent xylem to seal pathogen breaches.
                 </p>
               </div>
             </div>
@@ -203,6 +202,12 @@ export const ColophonModal: React.FC<ColophonModalProps> = ({ isOpen, onClose })
                 LBDA v2 drought, WNATA/N-TREND summer temperature reconstructions (1200–1894), and Crowley &amp;
                 Unterman (2013) ice-core volcanic aerosol forcing, sealed with a reproducible cryptographic PRNG seed.
               </li>
+              <li>
+                <strong>Measured Data vs. Simulated Specimen</strong>: Site elevation, terrain slope, and
+                1200–2026 climate histories come from empirical archives; ring widths, wood anatomy, and
+                stand fire dates are biophysically simulated from that climate record rather than cored from a
+                physical stump.
+              </li>
             </ul>
           </section>
 
@@ -219,8 +224,8 @@ export const ColophonModal: React.FC<ColophonModalProps> = ({ isOpen, onClose })
                 <span className="meta-value">The Radial Ledger: Biological Climate Archives</span>
               </div>
               <div className="meta-item">
-                <span className="meta-label">Scientific Lineage</span>
-                <span className="meta-value">Laboratory of Tree-Ring Research (LTRR), Tucson, AZ</span>
+                <span className="meta-label">Scientific Inspiration</span>
+                <span className="meta-value">Published dendrochronology literature (incl. Laboratory of Tree-Ring Research, Tucson, AZ; independent/unaffiliated)</span>
               </div>
               <div className="meta-item">
                 <span className="meta-label">Climatological Source</span>

@@ -52,7 +52,7 @@ describe('Milestone 5 (R5): Metadata, Cross-Device Polish & Release Staging', ()
     });
 
     it('configures og:image with 1200x630 dimension specifications and png type', () => {
-      expect(indexHtml).toContain('<meta property="og:image" content="./og-preview.png"');
+      expect(indexHtml).toContain('<meta property="og:image" content="https://xylem.art/og-preview.png"');
       expect(indexHtml).toContain('<meta property="og:image:width" content="1200"');
       expect(indexHtml).toContain('<meta property="og:image:height" content="630"');
       expect(indexHtml).toContain('<meta property="og:image:type" content="image/png"');
@@ -75,7 +75,7 @@ describe('Milestone 5 (R5): Metadata, Cross-Device Polish & Release Staging', ()
       expect(descMatch).not.toBeNull();
       expect(descMatch![1]).toContain('cellular wood anatomy');
 
-      expect(indexHtml).toContain('<meta name="twitter:image" content="./og-preview.png"');
+      expect(indexHtml).toContain('<meta name="twitter:image" content="https://xylem.art/og-preview.png"');
       expect(indexHtml).toContain('<meta name="twitter:image:alt"');
     });
 

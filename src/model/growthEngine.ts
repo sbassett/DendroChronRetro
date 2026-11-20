@@ -1049,6 +1049,17 @@ export function simulateTreeCrossSection(
       resinPocketsList.push(resin1);
     }
 
+    if (
+      activeCatface &&
+      !activeCatface.isClosed &&
+      activeCatface.openHalfArcRad > 0.02
+    ) {
+      polarRings[polarRings.length - 1].openCatfaceArc = {
+        centerAngleRad: activeCatface.centerAngleRad,
+        halfArcRad: activeCatface.openHalfArcRad,
+      };
+    }
+
     prevOuterRadii = outerRadiusMm;
   }
 

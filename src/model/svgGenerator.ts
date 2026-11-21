@@ -1128,14 +1128,17 @@ export function precomputeSimSvgCache(sim: TreeSimulationResult): SimSvgCache {
     const sliceBark = buildAnatomicalBarkAtRing(barkEvolutionCtx, ringIndex, {
       openCatfaceArcs,
       detail: {
-        barkSteps: 480,
-        nascentDensity: 360,
-        nascentMinSteps: 8,
-        scaleDensity: 360,
-        scaleMinSteps: 10,
-        dfLensDensity: 16,
-        dfLensMinSteps: 6,
-        seamSteps: 120,
+        barkSteps: 240,
+        nascentDensity: 160,
+        nascentMinSteps: 4,
+        scaleDensity: 160,
+        scaleMinSteps: 3,
+        dfLensDensity: 8,
+        dfLensMinSteps: 3,
+        seamSteps: 64,
+        dfCohortStride: 2,
+        minCellSpanMm: 2.2,
+        skipSubSeams: true,
       },
     });
     const { barkDefsClipPaths: sliceDefs, barkLayerMarkup: sliceMarkup } =

@@ -118,6 +118,9 @@ export interface BarkDetailConfig {
   dfLensDensity?: number;
   dfLensMinSteps?: number;
   seamSteps?: number;
+  dfCohortStride?: number;
+  minCellSpanMm?: number;
+  skipSubSeams?: boolean;
 }
 
 export interface BarkEvolutionContext {
@@ -137,6 +140,8 @@ export interface BarkEvolutionContext {
   cohortSpecs: CohortSpec[];
   fissures: EvolvedBarkFissure[];
   nascentJitterCache: Map<number, number>;
+  ppTileCache: Map<string, PonderosaTileSpec[]>;
+  dfLensCache: Map<string, { corkHalfBase: number; lenses: DouglasFirLensSpec[] }>;
 }
 
 function getBarkMechanicsParams(
@@ -227,7 +232,7 @@ export function computeBarkShedMm(
   return Math.max(saplingEpidermisShedMm, weatherShedMm);
 }
 
-interface PonderosaTileSpec {
+export interface PonderosaTileSpec {
   ts: number;
   te: number;
   span: number;
@@ -236,7 +241,7 @@ interface PonderosaTileSpec {
   curlBias: number;
 }
 
-interface DouglasFirLensSpec {
+export interface DouglasFirLensSpec {
   lStart: number;
   lEnd: number;
   lSpan: number;
@@ -694,6 +699,11 @@ function createBarkEvolutionContextFromStates(
     cohortSpecs,
     fissures,
     nascentJitterCache: new Map<number, number>(),
+    ppTileCache: new Map<string, PonderosaTileSpec[]>(),
+    dfLensCache: new Map<
+      string,
+      { corkHalfBase: number; lenses: DouglasFirLensSpec[] }
+    >(),
   };
 }
 
@@ -1115,6 +1125,11 @@ function evaluateBarkFromState(args: {
   totalProducedRhytidomeMm: number;
   cohorts: RhytidomeCohort[];
   nascentJitterCache: Map<number, number>;
+  ppTileCache?: Map<string, PonderosaTileSpec[]>;
+  dfLensCache?: Map<
+    string,
+    { corkHalfBase: number; lenses: DouglasFirLensSpec[] }
+  >;
   openCatfaceArcs?: Array<{ centerAngleRad: number; halfArcRad: number }>;
   detail?: BarkDetailConfig;
 }): BarkGeometry {
@@ -1136,6 +1151,8 @@ function evaluateBarkFromState(args: {
     totalProducedRhytidomeMm,
     cohorts,
     nascentJitterCache,
+    ppTileCache,
+    dfLensCache,
     openCatfaceArcs,
     detail,
   } = args;
@@ -1151,6 +1168,45 @@ function evaluateBarkFromState(args: {
   const dfLensDensity = detail?.dfLensDensity ?? 36;
   const dfLensMinSteps = detail?.dfLensMinSteps ?? 12;
   const seamSteps = detail?.seamSteps ?? 270;
+  const internalOctaves = detail ? 1 : 2;
+  const dfCohortStride = detail?.dfCohortStride ?? 1;
+  const dfMinLensSpanMm = detail?.minCellSpanMm ?? 0.5;
+  const ppMinScaleSpanMm = detail?.minCellSpanMm
+    ? Math.min(1.2, detail.minCellSpanMm)
+    : 0.35;
+  const skipSubSeams = detail?.skipSubSeams ?? false;
+  const ppTileCacheMap = ppTileCache ?? new Map<string, PonderosaTileSpec[]>();
+  const dfLensCacheMap =
+    dfLensCache ??
+    new Map<string, { corkHalfBase: number; lenses: DouglasFirLensSpec[] }>();
+
+  const getPonderosaTiles = (
+    cohIdx: number,
+    circ: number,
+    rBirth: number
+  ): PonderosaTileSpec[] => {
+    const key = `${cohIdx}:${Math.round(circ * 100)}`;
+    let cached = ppTileCacheMap.get(key);
+    if (!cached) {
+      cached = buildPonderosaCohortTiles(rngBark, cohIdx, circ, rBirth);
+      ppTileCacheMap.set(key, cached);
+    }
+    return cached;
+  };
+
+  const getDouglasFirLenses = (
+    cohIdx: number,
+    circ: number,
+    rBirth: number
+  ): { corkHalfBase: number; lenses: DouglasFirLensSpec[] } => {
+    const key = `${cohIdx}:${Math.round(circ * 100)}`;
+    let cached = dfLensCacheMap.get(key);
+    if (!cached) {
+      cached = buildDouglasFirCohortLenses(rngBark, cohIdx, circ, rBirth);
+      dfLensCacheMap.set(key, cached);
+    }
+    return cached;
+  };
 
   const basePhloemMm = computeBasePhloemMmForMorphology(
     morphology,
@@ -1348,7 +1404,7 @@ function evaluateBarkFromState(args: {
         isPlated &&
         matureFlakeWeight > 0.05 &&
         baseShedMm >= coh.bStartMm - 0.05
-          ? buildPonderosaCohortTiles(rngBark, coh.cohortIdx, cohortCircMm, rBirth)
+          ? getPonderosaTiles(coh.cohortIdx, cohortCircMm, rBirth)
           : undefined;
 
       for (let si = 0; si < segments.length; si++) {
@@ -1642,7 +1698,7 @@ function evaluateBarkFromState(args: {
           ? 0
           : Math.min(locThick, 1.35) *
             0.095 *
-            internalNoise.polarFbm(theta, 11.0, outSeed0, 2);
+            internalNoise.polarFbm(theta, 11.0, outSeed0, internalOctaves);
 
         runInner.push({ theta, r: rPh + z0 + padIn });
         runOuter.push({ theta, r: rPh + z1 + padOut + waveOut });
@@ -1679,12 +1735,7 @@ function evaluateBarkFromState(args: {
             ringIndex,
             activeFissures
           );
-      const tiles0 = buildPonderosaCohortTiles(
-        rngBark,
-        coh0.cohortIdx,
-        circ0,
-        rBirth0
-      );
+      const tiles0 = getPonderosaTiles(coh0.cohortIdx, circ0, rBirth0);
       const radialFrac0 = clamp(
         zMid0 / Math.max(1.0, meanRetainedGlobalMm),
         0,
@@ -1735,7 +1786,7 @@ function evaluateBarkFromState(args: {
             const oStart = Math.max(matStart, ts);
             const oEnd = Math.min(matEnd, te);
             const oSpanMm = oEnd - oStart;
-            if (oSpanMm < 0.35) continue;
+            if (oSpanMm < ppMinScaleSpanMm) continue;
 
             const spanRad = oSpanMm * invR;
             const steps = Math.max(
@@ -1780,7 +1831,7 @@ function evaluateBarkFromState(args: {
                 ? 0
                 : Math.min(locThick, 1.35) *
                   0.085 *
-                  internalNoise.polarFbm(matAng, 11.0, outSeed0, 2);
+                  internalNoise.polarFbm(matAng, 11.0, outSeed0, internalOctaves);
 
               runInner.push({
                 theta,
@@ -1890,8 +1941,14 @@ function evaluateBarkFromState(args: {
     const matScaleDenom = Math.max(10.0, rBirth);
 
     if (morphology === 'furrowed-corky') {
-      const { corkHalfBase, lenses } = buildDouglasFirCohortLenses(
-        rngBark,
+      if (
+        dfCohortStride > 1 &&
+        s < numActive - 1 &&
+        coh.cohortIdx % dfCohortStride !== 0
+      ) {
+        continue;
+      }
+      const { corkHalfBase, lenses } = getDouglasFirLenses(
         coh.cohortIdx,
         cohortCircMm,
         rBirth
@@ -1937,7 +1994,7 @@ function evaluateBarkFromState(args: {
             const oStart = Math.max(matStart, ls);
             const oEnd = Math.min(matEnd, le);
             const oSpanMm = oEnd - oStart;
-            if (oSpanMm < 0.5) continue;
+            if (oSpanMm < dfMinLensSpanMm) continue;
 
             const spanRad = oSpanMm * invR;
             const steps = Math.max(
@@ -1976,7 +2033,12 @@ function evaluateBarkFromState(args: {
               const wave =
                 locThick *
                 0.22 *
-                internalNoise.polarFbm(matAng, 6.5, coh.cohortIdx * 1.7, 2);
+                internalNoise.polarFbm(
+                  matAng,
+                  6.5,
+                  coh.cohortIdx * 1.7,
+                  internalOctaves
+                );
               const rMid = rPh + 0.5 * (z0 + z1) + wave;
               const halfT = locThick * corkHalfFrac * pinch;
 
@@ -2056,6 +2118,8 @@ function evaluateBarkFromState(args: {
           }
         }
 
+        if (skipSubSeams) continue;
+
         const segSpanMm = matEnd - matStart;
         const seamStepCount = Math.max(
           3,
@@ -2092,7 +2156,7 @@ function evaluateBarkFromState(args: {
               matAng,
               7.5,
               coh.cohortIdx * 2.3 + 9.1,
-              2
+              internalOctaves
             );
           seamRun.push({ theta, r: rPh + z0 + 0.1 * locThick + wave });
         }
@@ -2101,7 +2165,7 @@ function evaluateBarkFromState(args: {
     } else if (zSurfArr) {
       const tiles =
         layout.ppTiles ??
-        buildPonderosaCohortTiles(rngBark, coh.cohortIdx, cohortCircMm, rBirth);
+        getPonderosaTiles(coh.cohortIdx, cohortCircMm, rBirth);
       const tierParityLift = coh.cohortIdx % 2 === 1 ? 10 : -10;
       const inInterfaceSeed = (coh.cohortIdx + 1) * 1.73;
       const outInterfaceSeed = coh.cohortIdx * 1.73;
@@ -2148,7 +2212,7 @@ function evaluateBarkFromState(args: {
             const oStart = Math.max(matStart, ts);
             const oEnd = Math.min(matEnd, te);
             const oSpanMm = oEnd - oStart;
-            if (oSpanMm < 0.35) continue;
+            if (oSpanMm < ppMinScaleSpanMm) continue;
 
             if (isAttached) {
               const spanRad = oSpanMm * invR;
@@ -2177,7 +2241,7 @@ function evaluateBarkFromState(args: {
                     strokeGray: 24,
                     strokeWidthMm: scaleStrokeMm,
                   });
-                  if (effThick > 2.1 && runLam.length >= 2) {
+                  if (!skipSubSeams && effThick > 2.1 && runLam.length >= 2) {
                     peridermSeams.push({
                       pointsPolar: runLam,
                       gray: clamp(scaleGray - 24, 64, 152),
@@ -2223,10 +2287,20 @@ function evaluateBarkFromState(args: {
                 const sharedAmp = Math.min(locThick, 1.35) * 0.085;
                 const waveIn =
                   sharedAmp *
-                  internalNoise.polarFbm(matAng, 11.0, inInterfaceSeed, 2);
+                  internalNoise.polarFbm(
+                    matAng,
+                    11.0,
+                    inInterfaceSeed,
+                    internalOctaves
+                  );
                 const waveOut =
                   sharedAmp *
-                  internalNoise.polarFbm(matAng, 11.0, outInterfaceSeed, 2);
+                  internalNoise.polarFbm(
+                    matAng,
+                    11.0,
+                    outInterfaceSeed,
+                    internalOctaves
+                  );
 
                 const isExteriorLayer = z1 >= zSurf - 0.08 && locThick >= 0.25;
                 const padOut = isExteriorLayer ? 0.85 : 0.04;
@@ -2434,6 +2508,8 @@ export function buildAnatomicalBarkAtRing(
     totalProducedRhytidomeMm,
     cohorts,
     nascentJitterCache: ctx.nascentJitterCache,
+    ppTileCache: ctx.ppTileCache,
+    dfLensCache: ctx.dfLensCache,
     openCatfaceArcs: options?.openCatfaceArcs,
     detail: options?.detail,
   });

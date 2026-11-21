@@ -196,12 +196,24 @@ export function computeBarkShedMm(
   meanWoodRadiusMm: number
 ): number {
   const isPlated = morphology === 'plated-scaly';
-  const saplingEpidermisShedMm = isPlated
-    ? 4.5 * smoothstep(26, 62, meanWoodRadiusMm)
-    : 4.6 * smoothstep(20, 88, meanWoodRadiusMm);
+  if (isPlated) {
+    const saplingEpidermisShedMm =
+      2.2 * smoothstep(32, 88, meanWoodRadiusMm);
+    const onsetMm = 5.0;
+    const spanMm = 27.0; // asymptotic retained = onset + span - 2.2 = 29.8 mm
+    const excessB = Math.max(0, totalProducedRhytidomeMm - onsetMm);
+    const weatherShedMm =
+      excessB - spanMm * (1 - Math.exp(-excessB / spanMm));
+    return Math.min(
+      Math.max(0, totalProducedRhytidomeMm - 3.5),
+      saplingEpidermisShedMm + weatherShedMm
+    );
+  }
 
-  const onsetMm = isPlated ? 5.5 : 40.0;
-  const maxRetainedMm = isPlated ? 29.8 : 78.0;
+  const saplingEpidermisShedMm = 4.6 * smoothstep(20, 88, meanWoodRadiusMm);
+
+  const onsetMm = 40.0;
+  const maxRetainedMm = 78.0;
   const spanMm = maxRetainedMm - onsetMm;
   const retainedAfterWeatherMm =
     totalProducedRhytidomeMm <= onsetMm
@@ -220,7 +232,7 @@ interface PonderosaTileSpec {
   te: number;
   span: number;
   toneJitter: number;
-  earlyShedMm: number;
+  shedFrac: number;
   curlBias: number;
 }
 
@@ -264,7 +276,7 @@ function buildPonderosaCohortTiles(
       te,
       span: te - ts,
       toneJitter: rngC.range(-15, 16),
-      earlyShedMm: rngC.range(0, 2.1),
+      shedFrac: rngC.range(0.04, 0.96),
       curlBias: rngC.range(-1, 1),
     });
   }
@@ -819,11 +831,17 @@ function computeCohortRigidSegments(
 } {
   const isPlated = morphology === 'plated-scaly';
   const B = ringStates[evalRing].bRhytMm;
-  const bMid = 0.5 * (coh.bStartMm + Math.min(coh.bEndMm, B));
-  const halfDB = Math.max(0.1, bMid - coh.bStartMm);
-  const brBirth = findRingStateForB(ringStates, evalRing, bMid);
+  const isCompleted = B >= coh.bEndMm;
+  const bMidNow = 0.5 * (coh.bStartMm + Math.min(coh.bEndMm, B));
+  const bMidCleave = 0.5 * (coh.bStartMm + coh.bEndMm);
+  const halfDB = Math.max(0.1, bMidCleave - coh.bStartMm);
+  const brBirth = findRingStateForB(
+    ringStates,
+    evalRing,
+    isCompleted ? bMidCleave : coh.bStartMm
+  );
   const tBirth = brBirth.i0 + brBirth.t;
-  const zMidNow = Math.max(0, B - bMid);
+  const zMidNow = Math.max(0, B - bMidNow);
   const rMeanBirthW =
     ringStates[brBirth.i0].meanRadiusMm * (1 - brBirth.t) +
     ringStates[brBirth.i1].meanRadiusMm * brBirth.t;
@@ -839,14 +857,21 @@ function computeCohortRigidSegments(
     const f = activeFissures[fi];
     const tipB = f.tipB[evalRing];
     if (tipB <= coh.bStartMm) continue;
-    if (tipB < bMid) {
+    if (!isCompleted) {
+      const tHitOuter = findFissureCleaveTime(f, evalRing, coh.bStartMm);
+      if (tHitOuter >= 0 && tHitOuter <= tBirth + 1e-5) {
+        birthF.push(f);
+        continue;
+      }
+    }
+    if (tipB < bMidCleave) {
       partialNotches.push({
         f,
         tipPen: clamp((tipB - coh.bStartMm) / halfDB, 0, 1),
       });
       continue;
     }
-    const tCleave = findFissureCleaveTime(f, evalRing, bMid);
+    const tCleave = findFissureCleaveTime(f, evalRing, bMidCleave);
     if (tCleave < 0) continue;
     if (tCleave <= tBirth + 1e-5) {
       birthF.push(f);
@@ -926,9 +951,9 @@ function computeCohortRigidSegments(
     const rAtCleave = Math.max(
       10.0,
       interpPhloemRadiusAtTime(ringStates, morphology, tCleave, f.theta) +
-        Math.max(0, interpBAtTime(ringStates, tCleave) - bMid)
+        Math.max(0, interpBAtTime(ringStates, tCleave) - bMidCleave)
     );
-    const tipPastMm = Math.max(0, f.tipB[evalRing] - bMid);
+    const tipPastMm = Math.max(0, f.tipB[evalRing] - bMidCleave);
     const recoil = mech.elRecoilMm * smoothstep(0, 2.2, tipPastMm);
     const fTh = f.theta;
 
@@ -1208,7 +1233,9 @@ function evaluateBarkFromState(args: {
     }
   }
 
-  const matureFlakeWeight = smoothstep(14, 34, totalProducedRhytidomeMm);
+  const matureFlakeWeight = isPlated
+    ? smoothstep(7.5, 16.0, totalProducedRhytidomeMm)
+    : smoothstep(14, 34, totalProducedRhytidomeMm);
   for (let i = 0; i < barkSteps; i++) {
     const theta = i * dThetaStep;
     barkAnglesRad[i] = theta;
@@ -1299,7 +1326,7 @@ function evaluateBarkFromState(args: {
     const rawZOut = totalProducedRhytidomeMm - coh.bStartMm;
     if (rawZOut <= 0 || zIn >= meanRetainedGlobalMm + 2.5) continue;
 
-    if (s === 0) {
+    if (s === 0 && (!isPlated || meanRetainedGlobalMm <= 6.5)) {
       presBuf.fill(1.0);
     } else {
       const { segments, partialNotches, zMidNow, cohortCircMm, rBirth } =
@@ -1317,9 +1344,10 @@ function evaluateBarkFromState(args: {
         CohortRigidSegment & { rCoh: number; trimL: number; trimR: number }
       > = [];
       const ppTiles =
+        s > 0 &&
         isPlated &&
         matureFlakeWeight > 0.05 &&
-        baseShedMm >= coh.bEndMm - matureFlakeWeight * 2.1 - 0.1
+        baseShedMm >= coh.bStartMm - 0.05
           ? buildPonderosaCohortTiles(rngBark, coh.cohortIdx, cohortCircMm, rBirth)
           : undefined;
 
@@ -1344,8 +1372,8 @@ function evaluateBarkFromState(args: {
               seg.lengthMm * 0.25,
               0.12 * outerFrac * Math.max(0, rCoh - rBirth) * 0.14
             );
-        const trimL = seg.recoilL + 0.5 * weatherTrimMm;
-        const trimR = seg.recoilR + 0.5 * weatherTrimMm;
+        const trimL = seg.intactCircle ? 0 : seg.recoilL + 0.5 * weatherTrimMm;
+        const trimR = seg.intactCircle ? 0 : seg.recoilR + 0.5 * weatherTrimMm;
         const leftMm = -0.5 * seg.lengthMm + trimL;
         const rightMm = 0.5 * seg.lengthMm - trimR;
         if (rightMm - leftMm <= 0.1) continue;
@@ -1379,10 +1407,10 @@ function evaluateBarkFromState(args: {
 
           for (let sc = 0; sc < ppTiles.length; sc++) {
             const tile = ppTiles[sc];
-            const bDetach = coh.bEndMm - matureFlakeWeight * tile.earlyShedMm;
+            const bDetach =
+              coh.bStartMm + tile.shedFrac * (coh.bEndMm - coh.bStartMm);
             const dShed = baseShedMm - bDetach;
-            const attach = dShed <= 0 ? 1 : 1 - smoothstep(0, 0.85, dShed);
-            if (attach <= 1e-4) continue;
+            if (dShed >= 0) continue;
 
             for (
               let shift = -cohortCircMm;
@@ -1416,11 +1444,12 @@ function evaluateBarkFromState(args: {
                           tBevelRad,
                           Math.min(th - tAlpha, tBeta - th)
                         );
-                  const segV =
-                    bevelRad <= 1e-7
+                  const segV = seg.intactCircle
+                    ? 1.0
+                    : bevelRad <= 1e-7
                       ? 1.0
                       : smoothstep(0, bevelRad, Math.min(th - alpha, beta - th));
-                  const v = attach * Math.min(edgeV, segV);
+                  const v = Math.min(edgeV, segV);
                   if (v > presBuf[idx]) presBuf[idx] = v;
                 }
               }
@@ -1453,14 +1482,27 @@ function evaluateBarkFromState(args: {
     }
 
     const outSlice = cohortZ[s + 1];
-    for (let i = 0; i < barkSteps; i++) {
-      const localMax = localMaxRhytArr[i];
-      if (zIn >= localMax) continue;
-      const dH = Math.min(rawZOut, localMax) - zIn;
-      if (dH <= 1e-4) continue;
-      const lt = dH * profileScaleArr[i] * presBuf[i];
-      outSlice[i] = lt;
-      if (s > 0) olderThickArr[i] += lt;
+    if (isPlated) {
+      if (!(s > 0 && baseShedMm >= coh.bEndMm)) {
+        const dH = rawZOut - zIn;
+        if (dH > 1e-4) {
+          for (let i = 0; i < barkSteps; i++) {
+            const lt = dH * profileScaleArr[i] * presBuf[i];
+            outSlice[i] = lt;
+            if (s > 0) olderThickArr[i] += lt;
+          }
+        }
+      }
+    } else {
+      for (let i = 0; i < barkSteps; i++) {
+        const localMax = localMaxRhytArr[i];
+        if (zIn >= localMax) continue;
+        const dH = Math.min(rawZOut, localMax) - zIn;
+        if (dH <= 1e-4) continue;
+        const lt = dH * profileScaleArr[i] * presBuf[i];
+        outSlice[i] = lt;
+        if (s > 0) olderThickArr[i] += lt;
+      }
     }
   }
 
@@ -1616,24 +1658,37 @@ function evaluateBarkFromState(args: {
     };
 
     const emitPonderosaNascentTiles = () => {
+      const layout0 = cohortLayouts[0];
       const {
         segments: segs0,
         zMidNow: zMid0,
         cohortCircMm: circ0,
         rBirth: rBirth0,
-      } = computeCohortRigidSegments(
-        ringStates,
-        morphology,
-        mech,
-        coh0,
-        ringIndex,
-        activeFissures
-      );
+      } = layout0
+        ? {
+            segments: layout0.renderedSegs,
+            zMidNow: layout0.zMidNow,
+            cohortCircMm: layout0.cohortCircMm,
+            rBirth: layout0.rBirth,
+          }
+        : computeCohortRigidSegments(
+            ringStates,
+            morphology,
+            mech,
+            coh0,
+            ringIndex,
+            activeFissures
+          );
       const tiles0 = buildPonderosaCohortTiles(
         rngBark,
         coh0.cohortIdx,
         circ0,
         rBirth0
+      );
+      const radialFrac0 = clamp(
+        zMid0 / Math.max(1.0, meanRetainedGlobalMm),
+        0,
+        1
       );
       const tierParityLift = coh0.cohortIdx % 2 === 1 ? 10 : -10;
       const scaleStrokeMm0 = clamp(
@@ -1663,7 +1718,11 @@ function evaluateBarkFromState(args: {
         for (let sc = 0; sc < tiles0.length; sc++) {
           const tile = tiles0[sc];
           const scaleGray = Math.round(
-            clamp(90 + tierParityLift + tile.toneJitter * 0.75, 76, 114)
+            clamp(
+              96 + radialFrac0 * 96 + tierParityLift + tile.toneJitter,
+              80,
+              212
+            )
           );
           for (
             let shift = -circ0;
@@ -1711,7 +1770,7 @@ function evaluateBarkFromState(args: {
               }
               const rPh = samplePeriodicGrid(phloemOuterRadiusMm, theta);
               const locThick = Math.max(0.2, z1 - z0);
-              const isExterior = z1 >= zSurf - 0.08;
+              const isExterior = z1 >= zSurf - 0.08 && locThick >= 0.25;
               const padOut = isExterior ? 0.85 : 0.04;
               const padIn = -0.06;
               const uTile = clamp((sMm - ts) / Math.max(0.1, tile.span), 0, 1);
@@ -2064,12 +2123,19 @@ function evaluateBarkFromState(args: {
               212
             )
           );
-          const bDetach = coh.bEndMm - matureFlakeWeight * tile.earlyShedMm;
+          const bDetach =
+            coh.bStartMm + tile.shedFrac * (coh.bEndMm - coh.bStartMm);
           const dShed = baseShedMm - bDetach;
+          const isAttached = dShed < 0;
           const hasDelamSeam =
-            matureFlakeWeight > 0.12 && dShed >= -1.1 && dShed <= 0.25;
+            isAttached && matureFlakeWeight > 0.08 && dShed >= -1.15;
+          const flakeFlightMm = 1.45;
           const canPeelFlake =
-            matureFlakeWeight > 0.12 && dShed > 0.15 && dShed < 1.0;
+            !isAttached &&
+            matureFlakeWeight > 0.08 &&
+            dShed >= 0 &&
+            dShed < flakeFlightMm;
+          if (!isAttached && !canPeelFlake) continue;
 
           for (
             let shift = -cohortCircMm;
@@ -2084,114 +2150,114 @@ function evaluateBarkFromState(args: {
             const oSpanMm = oEnd - oStart;
             if (oSpanMm < 0.35) continue;
 
-            const spanRad = oSpanMm * invR;
-            const steps = Math.max(
-              Math.min(scaleMinSteps, Math.max(4, Math.ceil(oSpanMm / 0.8))),
-              Math.ceil((spanRad / TWO_PI) * scaleDensity)
-            );
+            if (isAttached) {
+              const spanRad = oSpanMm * invR;
+              const steps = Math.max(
+                Math.min(scaleMinSteps, Math.max(4, Math.ceil(oSpanMm / 0.8))),
+                Math.ceil((spanRad / TWO_PI) * scaleDensity)
+              );
 
-            let runOuter: PolarPoint[] = [];
-            let runInner: PolarPoint[] = [];
-            let runLam: PolarPoint[] = [];
-            let runDelam: PolarPoint[] = [];
-            let maxRunLocThick = 0;
+              let runOuter: PolarPoint[] = [];
+              let runInner: PolarPoint[] = [];
+              let runLam: PolarPoint[] = [];
+              let runDelam: PolarPoint[] = [];
+              let maxRunLocThick = 0;
 
-            const flushScaleRun = () => {
-              if (runOuter.length >= 2) {
-                const effThick = Math.min(nominalThick, maxRunLocThick);
-                const scaleStrokeMm = clamp(
-                  Math.max(effThick * 0.13, meanWoodRadiusMm * 0.0014),
-                  0.14,
-                  0.44
-                );
-                rhytidomeCells.push({
-                  pointsPolar: [...runOuter, ...runInner.slice().reverse()],
-                  fillGray: scaleGray,
-                  strokeGray: 24,
-                  strokeWidthMm: scaleStrokeMm,
+              const flushScaleRun = () => {
+                if (runOuter.length >= 2) {
+                  const effThick = Math.min(nominalThick, maxRunLocThick);
+                  const scaleStrokeMm = clamp(
+                    Math.max(effThick * 0.13, meanWoodRadiusMm * 0.0014),
+                    0.14,
+                    0.44
+                  );
+                  rhytidomeCells.push({
+                    pointsPolar: [...runOuter, ...runInner.slice().reverse()],
+                    fillGray: scaleGray,
+                    strokeGray: 24,
+                    strokeWidthMm: scaleStrokeMm,
+                  });
+                  if (effThick > 2.1 && runLam.length >= 2) {
+                    peridermSeams.push({
+                      pointsPolar: runLam,
+                      gray: clamp(scaleGray - 24, 64, 152),
+                      widthMm: clamp(effThick * 0.055, 0.08, 0.18),
+                    });
+                  }
+                  if (hasDelamSeam && runDelam.length >= 2) {
+                    peridermSeams.push({
+                      pointsPolar: runDelam,
+                      gray: 14,
+                      widthMm: clamp(
+                        0.32 + 0.55 * smoothstep(-1.15, 0.0, dShed),
+                        0.32,
+                        0.9
+                      ),
+                    });
+                  }
+                }
+                runOuter = [];
+                runInner = [];
+                runLam = [];
+                runDelam = [];
+                maxRunLocThick = 0;
+              };
+
+              for (let k = 0; k <= steps; k++) {
+                const sMm = oStart + (k / steps) * oSpanMm;
+                const theta = seg.centerTheta + (sMm - segMidMm) * invR;
+                const z0 = samplePeriodicGrid(zInArr, theta);
+                const z1 = samplePeriodicGrid(zOutArr, theta);
+                const zSurf = samplePeriodicGrid(zSurfArr, theta);
+                const locThick = z1 - z0;
+                if (locThick < 0.025) {
+                  flushScaleRun();
+                  continue;
+                }
+                if (locThick > maxRunLocThick) maxRunLocThick = locThick;
+
+                const rPh = samplePeriodicGrid(phloemOuterRadiusMm, theta);
+                const uTile = clamp((sMm - ts) / Math.max(0.1, tile.span), 0, 1);
+                const scallop = Math.sin(uTile * Math.PI);
+                const matAng = sMm / matScaleDenom;
+                const sharedAmp = Math.min(locThick, 1.35) * 0.085;
+                const waveIn =
+                  sharedAmp *
+                  internalNoise.polarFbm(matAng, 11.0, inInterfaceSeed, 2);
+                const waveOut =
+                  sharedAmp *
+                  internalNoise.polarFbm(matAng, 11.0, outInterfaceSeed, 2);
+
+                const isExteriorLayer = z1 >= zSurf - 0.08 && locThick >= 0.25;
+                const padOut = isExteriorLayer ? 0.85 : 0.04;
+                const padIn = -0.04;
+
+                runInner.push({
+                  theta,
+                  r: rPh + z0 + padIn + waveIn - locThick * 0.025 * scallop,
                 });
-                if (effThick > 2.1 && runLam.length >= 2) {
-                  peridermSeams.push({
-                    pointsPolar: runLam,
-                    gray: clamp(scaleGray - 24, 64, 152),
-                    widthMm: clamp(effThick * 0.055, 0.08, 0.18),
-                  });
-                }
-                if (hasDelamSeam && runDelam.length >= 2) {
-                  peridermSeams.push({
-                    pointsPolar: runDelam,
-                    gray: 14,
-                    widthMm: clamp(
-                      0.32 + 0.55 * smoothstep(-1.1, 0.2, dShed),
-                      0.32,
-                      0.9
-                    ),
-                  });
+                runOuter.push({
+                  theta,
+                  r: rPh + z1 + padOut + waveOut + locThick * 0.035 * scallop,
+                });
+                runLam.push({
+                  theta,
+                  r: rPh + 0.5 * (z0 + z1) + 0.5 * (waveIn + waveOut),
+                });
+                if (hasDelamSeam) {
+                  runDelam.push({ theta, r: rPh + z0 });
                 }
               }
-              runOuter = [];
-              runInner = [];
-              runLam = [];
-              runDelam = [];
-              maxRunLocThick = 0;
-            };
-
-            for (let k = 0; k <= steps; k++) {
-              const sMm = oStart + (k / steps) * oSpanMm;
-              const theta = seg.centerTheta + (sMm - segMidMm) * invR;
-              const z0 = samplePeriodicGrid(zInArr, theta);
-              const z1 = samplePeriodicGrid(zOutArr, theta);
-              const zSurf = samplePeriodicGrid(zSurfArr, theta);
-              const locThick = z1 - z0;
-              if (locThick < 0.025) {
-                flushScaleRun();
-                continue;
-              }
-              if (locThick > maxRunLocThick) maxRunLocThick = locThick;
-
-              const rPh = samplePeriodicGrid(phloemOuterRadiusMm, theta);
-              const uTile = clamp((sMm - ts) / Math.max(0.1, tile.span), 0, 1);
-              const scallop = Math.sin(uTile * Math.PI);
-              const matAng = sMm / matScaleDenom;
-              const sharedAmp = Math.min(locThick, 1.35) * 0.085;
-              const waveIn =
-                sharedAmp *
-                internalNoise.polarFbm(matAng, 11.0, inInterfaceSeed, 2);
-              const waveOut =
-                sharedAmp *
-                internalNoise.polarFbm(matAng, 11.0, outInterfaceSeed, 2);
-
-              const isExteriorLayer = z1 >= zSurf - 0.08;
-              const padOut = isExteriorLayer ? 0.85 : 0.04;
-              const padIn = -0.04;
-
-              runInner.push({
-                theta,
-                r: rPh + z0 + padIn + waveIn - locThick * 0.025 * scallop,
-              });
-              runOuter.push({
-                theta,
-                r: rPh + z1 + padOut + waveOut + locThick * 0.035 * scallop,
-              });
-              runLam.push({
-                theta,
-                r: rPh + 0.5 * (z0 + z1) + 0.5 * (waveIn + waveOut),
-              });
-              if (hasDelamSeam) {
-                runDelam.push({ theta, r: rPh + z0 });
-              }
+              flushScaleRun();
             }
-            flushScaleRun();
 
             if (canPeelFlake && oSpanMm >= 3.5) {
-              const uFlight = clamp((dShed - 0.15) / 0.85, 0, 1);
-              const opacity = 0.95 * (1 - smoothstep(0.35, 1.0, uFlight));
+              const uFlight = clamp(dShed / flakeFlightMm, 0, 1);
+              const opacity = 0.96 * (1 - smoothstep(0.42, 1.0, uFlight));
               if (opacity > 0.05) {
                 const maxLiftMm = clamp(meanWoodRadiusMm * 0.032, 2.4, 7.2);
                 const flakeThickMm = clamp(nominalThick, 1.2, 3.3);
-                const flakeFillGray = Math.round(
-                  clamp(182 + tile.toneJitter * 0.85, 158, 216)
-                );
+                const flakeFillGray = scaleGray;
                 const flakeStrokeMm = clamp(
                   Math.max(flakeThickMm * 0.13, meanWoodRadiusMm * 0.0014),
                   0.18,
@@ -2234,7 +2300,7 @@ function evaluateBarkFromState(args: {
                   const archCurl =
                     0.65 * uFlight * Math.pow(2 * uFlake - 1, 2);
                   const liftMm =
-                    0.55 +
+                    0.08 +
                     maxLiftMm * Math.pow(uFlight, 0.85) +
                     curlLift +
                     archCurl;

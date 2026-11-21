@@ -604,13 +604,17 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
         const rhyt = sim.bark.outerBarkRadiusMm.map(
           (rOut, i) => rOut - sim.bark.phloemOuterRadiusMm[i]
         );
-        const maxRhyt = Math.max(...rhyt);
+        const sortedRhyt = [...rhyt].sort((a, b) => a - b);
+        const topStart = Math.floor(sortedRhyt.length * 0.5);
+        let topSum = 0;
+        for (let i = topStart; i < sortedRhyt.length; i++) topSum += sortedRhyt[i];
+        const refRidgeRhyt = topSum / Math.max(1, sortedRhyt.length - topStart);
         const arcSecPerStep = (360 * 3600) / rhyt.length;
         const outerArcSec =
           rhyt.reduce((sum, h) => {
             const t = Math.max(
               0,
-              Math.min(1, (h - 0.65 * maxRhyt) / Math.max(1e-6, 0.2 * maxRhyt))
+              Math.min(1, (h - 0.65 * refRidgeRhyt) / Math.max(1e-6, 0.2 * refRidgeRhyt))
             );
             return sum + t * t * (3 - 2 * t);
           }, 0) * arcSecPerStep;
@@ -1210,5 +1214,103 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
         expect(cambiumIdx).toBeGreaterThan(ringsIdx);
       }
     }
+  });
+
+  it('grows Ponderosa bark strictly inside-out with full-thickness exterior scales flaking cleanly off', () => {
+    const env = makeMockEnvironment(9.5, 620, 10, 195);
+    const sim = simulateTreeCrossSection(
+      {
+        species: 'ponderosa-pine',
+        latitude: 35.2645,
+        longitude: -111.7442,
+        totalAge: 145,
+        deathYear: 2026,
+      },
+      env
+    );
+    const ctx = createBarkEvolutionContext(
+      SPECIES_PROFILES['ponderosa-pine'],
+      sim.anglesRad,
+      sim.rings,
+      new SeededRNG(sim.seedKey).fork('bark')
+    );
+
+    // 1. Shedding increases strictly across juvenile-to-mature transition radii (no flat plateau stall)
+    let prevShed = -1;
+    let plateauCount = 0;
+    for (let k = 20; k <= 55; k++) {
+      const st = ctx.ringStates[k];
+      if (!st) break;
+      const shed = computeBarkShedMm('plated-scaly', st.bRhytMm, st.meanRadiusMm);
+      if (prevShed >= 0 && shed - prevShed < 1e-4) plateauCount++;
+      expect(shed).toBeGreaterThanOrEqual(prevShed);
+      prevShed = shed;
+    }
+    expect(plateauCount).toBe(0);
+
+    // 2. Across rings 115..125, inner scales thicken from z=0, exterior scales keep full thickness,
+    //    and peeling flakes sit strictly outside exposed outerBarkRadiusMm (no attached duplicates)
+    let sawThinNascent = false;
+    let sawThickNascent = false;
+    let totalFlakesChecked = 0;
+    const twoPi = 2 * Math.PI;
+    const sampleArr = (arr: number[], th: number) => {
+      const n = arr.length;
+      const norm = ((th % twoPi) + twoPi) % twoPi;
+      const pos = (norm / twoPi) * n;
+      const i0 = Math.floor(pos) % n;
+      const i1 = (i0 + 1) % n;
+      const f = pos - Math.floor(pos);
+      return arr[i0] * (1 - f) + arr[i1] * f;
+    };
+
+    for (let k = 115; k <= 125; k++) {
+      const bark = buildAnatomicalBarkAtRing(ctx, k);
+      const exteriorMidThicknesses: number[] = [];
+
+      for (const cell of bark.rhytidomeCells) {
+        const half = cell.pointsPolar.length >> 1;
+        if (half < 3) continue;
+        const mid = half >> 1;
+        const pOut = cell.pointsPolar[mid];
+        const pIn = cell.pointsPolar[cell.pointsPolar.length - 1 - mid];
+        const rPh = sampleArr(bark.phloemOuterRadiusMm, pOut.theta);
+        const rSurf = sampleArr(bark.outerBarkRadiusMm, pOut.theta);
+        const spanRad = Math.abs(
+          cell.pointsPolar[half - 1].theta - cell.pointsPolar[0].theta
+        );
+        const thick = pOut.r - pIn.r;
+        const zIn = pIn.r - rPh;
+
+        if (zIn < 0.25 && rSurf - rPh > 10 && spanRad > 0.015) {
+          if (thick < 1.1) sawThinNascent = true;
+          if (thick > 2.0) sawThickNascent = true;
+        }
+        if (pOut.r >= rSurf - 0.5 && rSurf - rPh > 15 && spanRad > 0.03) {
+          exteriorMidThicknesses.push(thick);
+        }
+      }
+
+      expect(exteriorMidThicknesses.length).toBeGreaterThan(5);
+      for (const t of exteriorMidThicknesses) {
+        expect(t).toBeGreaterThan(1.6);
+      }
+
+      for (const flake of bark.sheddingFlakes ?? []) {
+        const half = flake.pointsPolar.length >> 1;
+        if (half < 3) continue;
+        const mid = half >> 1;
+        const pOut = flake.pointsPolar[mid];
+        const pIn = flake.pointsPolar[flake.pointsPolar.length - 1 - mid];
+        const rSurf = sampleArr(bark.outerBarkRadiusMm, pOut.theta);
+        expect(pOut.r - pIn.r).toBeGreaterThan(1.1);
+        expect(pIn.r).toBeGreaterThan(rSurf - 0.02);
+        totalFlakesChecked++;
+      }
+    }
+
+    expect(sawThinNascent).toBe(true);
+    expect(sawThickNascent).toBe(true);
+    expect(totalFlakesChecked).toBeGreaterThan(20);
   });
 });

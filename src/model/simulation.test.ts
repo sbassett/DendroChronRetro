@@ -1139,4 +1139,76 @@ describe('Tree Cross-Section Simulation & SVG Engine', () => {
       expect(maxCellWidth50).toBeLessThanOrEqual(maxCellWidth35 * 1.15);
     }
   });
+
+  it('renders high-contrast inside-out bark scale aging and actively peeling exterior shedding flakes at maturity', () => {
+    const env = makeMockEnvironment(9.5, 680, 12, 195);
+    const twoPi = 2 * Math.PI;
+
+    for (const species of ['ponderosa-pine', 'douglas-fir'] as const) {
+      const sim = simulateTreeCrossSection(
+        {
+          species,
+          latitude: 44.4622,
+          longitude: -121.6358,
+          totalAge: 140,
+          deathYear: 2026,
+        },
+        env
+      );
+      const ctx = createBarkEvolutionContext(
+        SPECIES_PROFILES[species],
+        sim.anglesRad,
+        sim.rings,
+        new SeededRNG(sim.seedKey).fork('bark')
+      );
+
+      // Sapling stage has not entered mature exterior exfoliation yet
+      const saplingBark = buildAnatomicalBarkAtRing(ctx, 10);
+      expect(saplingBark.sheddingFlakes ?? []).toHaveLength(0);
+
+      // Mature rhytidome spans rich tonal aging contrast from dark inner periderm to pale weathered outer bark
+      const grays = sim.bark.rhytidomeCells.map((c) => c.fillGray);
+      const minGray = Math.min(...grays);
+      const maxGray = Math.max(...grays);
+      expect(maxGray - minGray).toBeGreaterThanOrEqual(70);
+
+      if (species === 'ponderosa-pine') {
+        const flakes = sim.bark.sheddingFlakes ?? [];
+        expect(flakes.length).toBeGreaterThanOrEqual(5);
+
+        for (const flake of flakes) {
+          expect(flake.opacity).toBeGreaterThan(0);
+          expect(flake.opacity).toBeLessThanOrEqual(1);
+          expect(flake.pointsPolar.length).toBeGreaterThanOrEqual(6);
+          for (const pt of flake.pointsPolar) {
+            const normTh = ((pt.theta % twoPi) + twoPi) % twoPi;
+            const phIdx =
+              Math.floor((normTh / twoPi) * sim.bark.phloemOuterRadiusMm.length) %
+              sim.bark.phloemOuterRadiusMm.length;
+            expect(pt.r).toBeGreaterThan(sim.bark.phloemOuterRadiusMm[phIdx] + 5);
+          }
+        }
+
+        const svg = generateCrossSectionSvg(sim, {
+          showBark: true,
+          showMedullaryRays: true,
+          showAnnotations: false,
+          transparentBackground: false,
+        });
+        const barkLayerIdx = svg.indexOf('id="bark-layer"');
+        const flakesIdx = svg.indexOf('id="bark-shedding-flakes"');
+        const innerPhloemIdx = svg.indexOf('id="inner-phloem"');
+        const phloemRaysIdx = svg.indexOf('id="phloem-rays"');
+        const ringsIdx = svg.indexOf('id="annual-rings"');
+        const cambiumIdx = svg.indexOf('id="vascular-cambium"');
+
+        expect(barkLayerIdx).toBeGreaterThan(0);
+        expect(flakesIdx).toBeGreaterThan(barkLayerIdx);
+        expect(innerPhloemIdx).toBeGreaterThan(flakesIdx);
+        expect(phloemRaysIdx).toBeGreaterThan(innerPhloemIdx);
+        expect(ringsIdx).toBeGreaterThan(phloemRaysIdx);
+        expect(cambiumIdx).toBeGreaterThan(ringsIdx);
+      }
+    }
+  });
 });

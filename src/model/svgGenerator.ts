@@ -70,6 +70,35 @@ function grayHex(v: number): string {
   return `#${h}${h}${h}`;
 }
 
+function barkToneHex(pal: PaletteDefinition, grayVal: number): string {
+  if (pal.id === 'skeleton-plot') return grayHex(grayVal);
+  const v = Math.max(0, Math.min(255, grayVal));
+  const stops: ReadonlyArray<[number, string]> =
+    pal.id === 'charred-subalpine'
+      ? [
+          [0, '#0b0f17'],
+          [50, pal.barkFissureColor],
+          [115, '#334155'],
+          [175, '#64748b'],
+          [255, '#cbd5e1'],
+        ]
+      : [
+          [0, '#160e09'],
+          [50, pal.barkFissureColor],
+          [115, '#63422c'],
+          [175, '#b58558'],
+          [255, '#dfd0b8'],
+        ];
+  for (let i = 0; i < stops.length - 1; i++) {
+    const [v0, c0] = stops[i];
+    const [v1, c1] = stops[i + 1];
+    if (v <= v1) {
+      return blendHex(c0, c1, (v - v0) / Math.max(1e-6, v1 - v0));
+    }
+  }
+  return stops[stops.length - 1][1];
+}
+
 /**
  * Crisp polygonal closed path (used for high-res fractured bark silhouettes).
  */
@@ -641,7 +670,7 @@ function buildBarkLayerBundle(
     const cellD = polarPointsPath(cell.pointsPolar, true);
     if (cellD) {
       barkLayerElements.push(
-        `<path d="${cellD}" fill="${grayHex(cell.fillGray)}" stroke="${grayHex(cell.strokeGray)}" stroke-width="${cell.strokeWidthMm.toFixed(2)}" stroke-linejoin="round"/>`
+        `<path d="${cellD}" fill="${barkToneHex(pal, cell.fillGray)}" stroke="${barkToneHex(pal, cell.strokeGray)}" stroke-width="${cell.strokeWidthMm.toFixed(2)}" stroke-linejoin="round"/>`
       );
     }
   }
@@ -649,7 +678,7 @@ function buildBarkLayerBundle(
     const seamD = polarPointsPath(seam.pointsPolar, false);
     if (seamD) {
       barkLayerElements.push(
-        `<path d="${seamD}" fill="none" stroke="${grayHex(seam.gray)}" stroke-width="${seam.widthMm.toFixed(2)}" stroke-linecap="round"/>`
+        `<path d="${seamD}" fill="none" stroke="${barkToneHex(pal, seam.gray)}" stroke-width="${seam.widthMm.toFixed(2)}" stroke-linecap="round"/>`
       );
     }
   }
@@ -658,6 +687,19 @@ function buildBarkLayerBundle(
   barkLayerElements.push(
     `<path d="${outerBarkD}" fill="none" stroke="${pal.barkFissureColor}" stroke-width="${outerStrokeW.toFixed(2)}" stroke-linejoin="round"/>`
   );
+  if (bark.sheddingFlakes && bark.sheddingFlakes.length > 0) {
+    barkLayerElements.push(`<g id="bark-shedding-flakes" pointer-events="none">`);
+    for (const flake of bark.sheddingFlakes) {
+      const flakeD = polarPointsPath(flake.pointsPolar, true);
+      if (flakeD) {
+        const op = flake.opacity.toFixed(2);
+        barkLayerElements.push(
+          `<path d="${flakeD}" fill="${barkToneHex(pal, flake.fillGray)}" fill-opacity="${op}" stroke="${barkToneHex(pal, flake.strokeGray)}" stroke-opacity="${op}" stroke-width="${flake.strokeWidthMm.toFixed(2)}" stroke-linejoin="round"/>`
+        );
+      }
+    }
+    barkLayerElements.push(`</g>`);
+  }
   barkLayerElements.push(
     `<path id="inner-phloem" d="${phloemOuterD}" fill="#d0cec6" stroke="${pal.barkFissureColor}" stroke-width="${innerPeridermW.toFixed(2)}" stroke-linejoin="round"/>`
   );

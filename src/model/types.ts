@@ -180,6 +180,14 @@ export interface BarkGeometry {
     gray: number;
     widthMm: number;
   }>;
+  /** Outer bark scales / weathered cork chips actively peeling and shedding beyond the attached silhouette */
+  sheddingFlakes?: Array<{
+    pointsPolar: PolarPoint[];
+    fillGray: number;
+    strokeGray: number;
+    strokeWidthMm: number;
+    opacity: number;
+  }>;
 }
 
 export interface ViabilityAssessment {
